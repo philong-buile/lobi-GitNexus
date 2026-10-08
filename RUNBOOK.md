@@ -93,7 +93,7 @@ If it recurs, the cause is almost always environmental rather than a code defect
 GITNEXUS_VECTOR_MAX_DISTANCE=0.8 npx gitnexus query "how are expired sessions removed" --limit 10
 ```
 
-Compare target inclusion and ranking against the default; a broader cutoff also admits less relevant hits. Set the variable in the MCP/serve launch environment and restart that process when tuning a server. A cutoff change needs no reindex and setting it only during `analyze` does not persist it. If the index has no vectors, generate embeddings first; if the embedding model or dimensions differ between indexing and querying, align that configuration and regenerate vectors. See [Vector cutoff tuning](README.md#vector-cutoff-tuning) for validation rules and the limited `voyage-code-4` evidence from #3457.
+Compare target inclusion and ranking against the default; a broader cutoff also admits less relevant hits. Set the variable in the MCP/serve launch environment and restart that process when tuning a server. A cutoff change needs no reindex and setting it only during `analyze` does not persist it. If the index has no vectors, generate embeddings first; if the embedding model or dimensions differ between indexing and querying, align that configuration and regenerate vectors. See [Vector cutoff tuning](docs/fork/gitnexus-reference.md#vector-cutoff-tuning) for validation rules and the limited `voyage-code-4` evidence from #3457.
 
 **Large repos:** Analyze may skip or limit embedding work when node counts are very high; watch CLI output.
 
