@@ -179,6 +179,7 @@ describe('createMCPServer', () => {
       expect(backend.selectToolRepository).toHaveBeenCalledWith(undefined, undefined, {
         allowCwdDefault: true,
         refreshRegistry: true,
+        allowWorktreeFallback: true,
       });
     } finally {
       await client.close();

@@ -94,8 +94,10 @@ describe('detect_changes worktree support — structural', () => {
     expect(backendSrc).toMatch(/resolveWorktreeCwd/);
     // The helper must be exported so tests can call it directly.
     expect(backendSrc).toMatch(/export function resolveWorktreeCwd/);
-    // detectChanges passes process.cwd() to the helper.
-    expect(backendSrc).toMatch(/resolveWorktreeCwd\(repo\.repoPath,\s*process\.cwd\(\)\)/);
+    // detectChanges passes the worktree a fallback handle serves, else process.cwd().
+    expect(backendSrc).toMatch(
+      /resolveWorktreeCwd\(repo\.repoPath,\s*repo\.servedFor\s*\?\?\s*process\.cwd\(\)\)/,
+    );
   });
 
   it('git worktree support is documented in the tool description', () => {

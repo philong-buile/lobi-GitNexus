@@ -95,13 +95,13 @@ export const QUERY_MAX_MAX_SYMBOLS = 200;
 export const CONTEXT_CHAIN_MAX_DEPTH = 3;
 
 const CWD_AWARE_REPO_OMISSION =
-  'Omit when only one repo is indexed, an MCP default is configured, or the GitNexus process cwd is inside a registered path without crossing an unindexed nested Git checkout; otherwise specify it explicitly.';
+  'Omit when only one repo is indexed, an MCP default is configured, or the GitNexus process cwd is inside a registered path without crossing an unindexed nested Git checkout; otherwise specify it explicitly. A path or cwd inside an unindexed linked worktree is answered from a sibling worktree of the same repo (`staleness.servedFrom`).';
 const MUTATING_REPO_OMISSION =
   'Omit only when one repo is indexed or an MCP default is configured; otherwise mutating tools require an explicit repo.';
 
 /** Always-on identity+freshness field on query/context/impact/cypher object results (#3291). */
 const HOT_READ_STALENESS_NOTE =
-  "Object results attach `staleness` even when current. Read `staleness.branch`/`lastCommit` for which index answered and `status` for freshness. Re-analyze only for `behind` or `diverged` — `current` is this clone's HEAD, not necessarily the default branch; `unknown` is unmeasurable, not stale. Field is only on object results (not raw-array cypher, error envelopes, or `@group` calls).";
+  "Object results attach `staleness` even when current. Read `staleness.branch`/`lastCommit` for which index answered and `status` for freshness. Re-analyze only for `behind` or `diverged` — `current` is this clone's HEAD, not necessarily the default branch; `unknown` is unmeasurable, not stale. Field is only on object results (not raw-array cypher, error envelopes, or `@group` calls). `servedFrom` set: this worktree has no index and that sibling worktree answered, measured against this worktree's HEAD.";
 
 export const GITNEXUS_TOOLS: ToolDefinition[] = [
   {
