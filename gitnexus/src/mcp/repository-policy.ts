@@ -209,7 +209,7 @@ export class McpRepositoryPolicy {
       await backend.selectToolRepository(undefined, undefined, {
         allowCwdDefault: true,
         refreshRegistry: true,
-        // Read tools also answer for an unindexed linked worktree of a
+        // Graph read tools also answer for an unindexed linked worktree of a
         // registered repo; mutating tools still require `repo` (below).
         allowWorktreeFallback: true,
       });
@@ -267,7 +267,10 @@ export class McpRepositoryPolicy {
     if (this.restricted && method.startsWith('group_')) {
       throw new Error('Group tools are unavailable when an MCP repository allowlist is set.');
     }
-    return backend.callTool(method, this.normalizeToolArgs(params));
+    const args = this.normalizeToolArgs(params);
+    // An allowlist names exact checkouts; a sibling worktree is not on it.
+    if (this.restricted) return backend.callTool(method, args, { worktreeFallback: false });
+    return backend.callTool(method, args);
   }
 
   private async resolveRepo(

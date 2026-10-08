@@ -59,7 +59,8 @@ describe('detect_changes worktree support — structural', () => {
     // returns repo.repoPath when no linked worktree is detected. The old
     // dead `let diffCwd = repo.repoPath` was removed to fix CodeQL
     // "useless assignment to local variable".
-    expect(backendSrc).toMatch(/let diffCwd\s*=\s*resolveWorktreeCwd\(/);
+    // A worktree-fallback handle's servedFor is used directly, before it.
+    expect(backendSrc).toMatch(/let diffCwd\s*=\s*repo\.servedFor\s*\?\?\s*resolveWorktreeCwd\(/);
   });
 
   it('rejects relative paths with an absolute-path error', () => {
@@ -94,10 +95,8 @@ describe('detect_changes worktree support — structural', () => {
     expect(backendSrc).toMatch(/resolveWorktreeCwd/);
     // The helper must be exported so tests can call it directly.
     expect(backendSrc).toMatch(/export function resolveWorktreeCwd/);
-    // detectChanges passes the worktree a fallback handle serves, else process.cwd().
-    expect(backendSrc).toMatch(
-      /resolveWorktreeCwd\(repo\.repoPath,\s*repo\.servedFor\s*\?\?\s*process\.cwd\(\)\)/,
-    );
+    // detectChanges passes process.cwd() to the helper.
+    expect(backendSrc).toMatch(/resolveWorktreeCwd\(repo\.repoPath,\s*process\.cwd\(\)\)/);
   });
 
   it('git worktree support is documented in the tool description', () => {

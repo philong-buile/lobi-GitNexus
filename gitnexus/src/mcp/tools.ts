@@ -95,7 +95,7 @@ export const QUERY_MAX_MAX_SYMBOLS = 200;
 export const CONTEXT_CHAIN_MAX_DEPTH = 3;
 
 const CWD_AWARE_REPO_OMISSION =
-  'Omit when only one repo is indexed, an MCP default is configured, or the GitNexus process cwd is inside a registered path without crossing an unindexed nested Git checkout; otherwise specify it explicitly. A path or cwd inside an unindexed linked worktree is answered from a sibling worktree of the same repo (`staleness.servedFrom`).';
+  'Omit when only one repo is indexed, an MCP default is configured, or the GitNexus process cwd is inside a registered path without crossing an unindexed nested Git checkout; otherwise specify it explicitly. For query, context, impact, cypher and detect_changes, an absolute path or cwd inside an unindexed linked worktree is answered from a sibling worktree of the same repo (`staleness.servedFrom`).';
 const MUTATING_REPO_OMISSION =
   'Omit only when one repo is indexed or an MCP default is configured; otherwise mutating tools require an explicit repo.';
 
