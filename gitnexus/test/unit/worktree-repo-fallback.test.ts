@@ -244,6 +244,58 @@ describe('read-only tools fall back to a sibling worktree index', () => {
     ).rejects.toThrow(/not found/);
   });
 
+  it('detect_changes diffs the asked-about worktree, even when the sibling is itself a worktree', async () => {
+    // Sibling-at-HEAD wins, and it is a linked worktree: resolveWorktreeCwd
+    // would return it unchanged, so the diff must come from servedFor directly.
+    const wtHead = git(fx.worktree, 'rev-parse', 'HEAD');
+    git(fx.indexedWorktree, 'checkout', '--detach', wtHead);
+    register(entry('repo', fx.main, fx.mainHead), entry('repo', fx.indexedWorktree, wtHead));
+    await backend.init();
+    writeFileSync(path.join(fx.worktree, 'b.ts'), 'export const x = 1;\n');
+    writeFileSync(path.join(fx.indexedWorktree, 'a.ts'), 'export const sibling = 1;\n');
+
+    const result = (await backend.callTool('detect_changes', {
+      repo: fx.worktree,
+      scope: 'unstaged',
+    })) as { unmapped_files?: string[]; staleness?: { servedFrom?: string } };
+
+    expect(result.unmapped_files).toEqual(['b.ts']);
+    expect(result.staleness?.servedFrom).toBe(fx.indexedWorktree);
+  });
+
+  it('only graph tools fall back: file readers and an explicit opt-out stay exact', async () => {
+    register(entry('repo', fx.main, fx.mainHead), entry('other', fx.other, 'ffff'));
+    await backend.init();
+
+    await expect(
+      backend.callTool('read_file', { repo: fx.worktree, path: 'a.ts' }),
+    ).rejects.toThrow(/not found/);
+    await expect(
+      backend.callTool('impact', { target: 'x', repo: fx.worktree }, { worktreeFallback: false }),
+    ).rejects.toThrow(/not found/);
+  });
+
+  it('does not treat two submodules of one superproject as siblings', async () => {
+    // Both submodules' common dirs sit under <super>/.git/modules, so their
+    // parents are equal; only the common dir itself tells them apart.
+    const source = fx.other;
+    const sup = path.join(path.dirname(fx.main), 'super');
+    mkdirSync(sup);
+    git(sup, 'init', '-b', 'main');
+    git(sup, 'config', 'user.email', 'wt@fallback.test');
+    git(sup, 'config', 'user.name', 'Worktree Fallback');
+    for (const name of ['a', 'b']) {
+      git(sup, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', source, name);
+    }
+    const subA = path.join(sup, 'a');
+    register(entry('a', subA, git(subA, 'rev-parse', 'HEAD')));
+    await backend.init();
+
+    await expect(
+      backend.selectToolRepository(path.join(sup, 'b'), undefined, { allowWorktreeFallback: true }),
+    ).rejects.toThrow(/not found/);
+  });
+
   it('does not fall back across repositories', async () => {
     register(entry('other', fx.other, 'ffff'), entry('third', fx.indexedWorktree, fx.mainHead));
     await backend.init();

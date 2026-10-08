@@ -67,6 +67,9 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+/** Restricted policies turn the unindexed-worktree fallback off. */
+const NO_FALLBACK = { worktreeFallback: false };
+
 describe('MCP repository policy', () => {
   it('trims, resolves, and deduplicates configured repository specifiers', async () => {
     const backend = createBackend();
@@ -80,16 +83,24 @@ describe('MCP repository policy', () => {
     expect(repos.map((repo) => repo.name)).toEqual(['Alpha', 'Beta']);
 
     await scoped.callTool('query', { search_query: 'auth' });
-    expect(backend.callTool).toHaveBeenLastCalledWith('query', {
-      search_query: 'auth',
-      repo: '/repos/alpha',
-    });
+    expect(backend.callTool).toHaveBeenLastCalledWith(
+      'query',
+      {
+        search_query: 'auth',
+        repo: '/repos/alpha',
+      },
+      NO_FALLBACK,
+    );
 
     await scoped.callTool('context', { name: 'auth', repo: ' beta ' });
-    expect(backend.callTool).toHaveBeenLastCalledWith('context', {
-      name: 'auth',
-      repo: '/repos/beta',
-    });
+    expect(backend.callTool).toHaveBeenLastCalledWith(
+      'context',
+      {
+        name: 'auth',
+        repo: '/repos/beta',
+      },
+      NO_FALLBACK,
+    );
   });
 
   it('filters list_repos before applying pagination and totals', async () => {
@@ -128,10 +139,14 @@ describe('MCP repository policy', () => {
       GITNEXUS_MCP_ALLOWED_REPOS: 'Beta',
     });
     await policy.scopeBackend(backend).callTool('search', { query: 'auth' });
-    expect(backend.callTool).toHaveBeenCalledWith('search', {
-      query: 'auth',
-      repo: '/repos/beta',
-    });
+    expect(backend.callTool).toHaveBeenCalledWith(
+      'search',
+      {
+        query: 'auth',
+        repo: '/repos/beta',
+      },
+      NO_FALLBACK,
+    );
   });
 
   it('requires an explicit repo when multiple repositories are allowed without a default', async () => {
@@ -214,7 +229,11 @@ describe('MCP repository policy', () => {
       GITNEXUS_MCP_DEFAULT_REPO: '/repos/duplicate-two',
     });
     await policy.scopeBackend(backend).callTool('overview', {});
-    expect(backend.callTool).toHaveBeenCalledWith('overview', { repo: '/repos/duplicate-two' });
+    expect(backend.callTool).toHaveBeenCalledWith(
+      'overview',
+      { repo: '/repos/duplicate-two' },
+      NO_FALLBACK,
+    );
   });
 
   it('rejects hidden and ambiguous selections without revealing registry contents', async () => {
@@ -356,10 +375,14 @@ describe('MCP repository policy', () => {
         arguments: { search_query: 'auth' },
       });
       expect(query.isError).not.toBe(true);
-      expect(backend.callTool).toHaveBeenLastCalledWith('query', {
-        search_query: 'auth',
-        repo: '/repos/alpha',
-      });
+      expect(backend.callTool).toHaveBeenLastCalledWith(
+        'query',
+        {
+          search_query: 'auth',
+          repo: '/repos/alpha',
+        },
+        NO_FALLBACK,
+      );
 
       const hiddenAlias = await client.callTool({
         name: 'search',

@@ -37,7 +37,7 @@ Today, agents rarely work in one checkout. Claude Code, Codex and Cursor session
 - **An error.** With several indexed repos, the call fails with `Multiple repositories indexed`.
 - **"Not found".** Passing the worktree path, or any subdirectory of an indexed checkout, as `repo` fails with `Repository "<path>" not found`.
 
-This fork fixes all three. Read-only tools answer from a sibling worktree's index, and they **say so**: the response names the sibling it came from and measures freshness against *your* worktree's HEAD.
+This fork fixes all three. The graph tools (`query`, `context`, `impact`, `cypher`) and `detect_changes` answer from a sibling worktree's index, and they **say so**: the response names the sibling it came from and measures freshness against *your* worktree's HEAD.
 
 ## Before and after
 
@@ -45,12 +45,13 @@ This fork fixes all three. Read-only tools answer from a sibling worktree's inde
 |---|---|---|
 | A new worktree, one repo indexed | Main checkout's graph, reported as `current` | Same graph, with `staleness.servedFrom` set and `status` measured at the worktree HEAD (for example `behind`, 1 commit) |
 | A new worktree, several repos indexed | `Multiple repositories indexed` | The sibling worktree of the *same* repository answers |
-| `repo: "<worktree path>"` | `Repository "<path>" not found` | The sibling worktree answers, marked `servedFrom` |
-| `repo: "<subdirectory of an indexed checkout>"` | `Repository "<path>" not found` | Resolves to that checkout |
+| `repo: "<absolute worktree path>"` | `Repository "<path>" not found` | The sibling worktree answers, marked `servedFrom` |
+| `repo: "<absolute subdirectory of an indexed checkout>"` | `Repository "<path>" not found` | Resolves to that checkout |
 | Several indexed siblings | — | Prefers the sibling indexed at the worktree's own HEAD, then the main checkout |
 | `detect_changes` for a worktree | Diffs only when the server was *launched* in it | Also diffs the worktree you name with `repo` |
-| `rename` | Exact checkout only | **Unchanged.** Writes never fall back to a sibling |
-| An unrelated repository | — | **Unchanged.** No fallback across repositories |
+| `rename`, `read_file`, `grep` | Exact checkout only | **Unchanged.** Writes and file reads never use a sibling's checkout |
+| `GITNEXUS_MCP_ALLOWED_REPOS` set | Exact allowed checkouts | **Unchanged.** No fallback, so the allowlist cannot widen |
+| An unrelated repository, or another submodule of the same superproject | — | **Unchanged.** No fallback across repositories |
 
 The difference that matters is the last column's honesty. An agent can trust an answer it is told is approximate. It cannot trust an answer that is wrong and labelled `current`.
 
@@ -114,8 +115,9 @@ flowchart TD
     F --> G["Answer from the sibling's index<br/>staleness.servedFrom = sibling<br/>freshness measured at this worktree's HEAD"]
 ```
 
-- **Read-only tools only.** `query`, `context`, `impact`, `cypher`, `detect_changes` and the other read tools may fall back. `rename` never does: an edit must land in the checkout you asked for.
-- **Same repository only.** Siblings are matched by git's shared common directory, never by name, so an unrelated repo cannot answer.
+- **Graph tools only.** `query`, `context`, `impact`, `cypher` and `detect_changes` may fall back, and each marks its answer with `staleness.servedFrom`. `read_file` and `grep` would read the sibling's files, and `rename` must edit the checkout you asked for, so none of them falls back.
+- **Same repository only.** Siblings are matched by `git rev-parse --git-common-dir` itself, never by name or by its parent folder, so an unrelated repo, or another submodule of the same superproject, cannot answer.
+- **Allowlists stay exact.** With `GITNEXUS_MCP_ALLOWED_REPOS` set, the fallback is off.
 - **Honest staleness.** The cached freshness check is keyed per worktree, and the `hint` says which sibling answered and how to get an exact graph.
 - **No change when nothing falls back.** Calls that resolve to a checkout's own index return exactly what upstream returns.
 
@@ -128,8 +130,9 @@ The change lives in [`gitnexus/src/mcp/local/local-backend.ts`](gitnexus/src/mcp
   - a subdirectory
   - one repo and several repos selected by cwd
   - preferring the sibling indexed at the worktree's HEAD
-  - `rename` never falling back
-  - no fallback across repositories
+  - `rename`, `read_file` and an explicit opt-out never falling back
+  - no fallback across repositories, or between two submodules of one superproject
+  - `detect_changes` diffing the asked-about worktree, even when the sibling that answers is itself a linked worktree
   - the `servedFrom` payload
 
   The real staleness check runs; only the registry and database are stubbed.

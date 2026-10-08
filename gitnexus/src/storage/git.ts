@@ -484,6 +484,27 @@ export const getCanonicalRepoRoot = (fromPath: string): string | null => {
   }
 };
 
+/**
+ * Absolute `git rev-parse --git-common-dir` for a path, or `null`. Shared by a
+ * main checkout and all of its linked worktrees, and unique per repository —
+ * unlike its parent ({@link getCanonicalRepoRoot}), which submodules share
+ * (`<super>/.git/modules`) and bare repositories in one folder share too.
+ */
+export const getGitCommonDir = (fromPath: string): string | null => {
+  try {
+    const commonDir = chompGitOutput(
+      execSync('git rev-parse --path-format=absolute --git-common-dir', {
+        cwd: fromPath,
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
+      }),
+    );
+    return commonDir ? path.resolve(commonDir) : null;
+  } catch {
+    return null;
+  }
+};
+
 // getGitInfoExcludePath/getCoreExcludesFilePath are called once per repo
 // PER language/contract extractor during group sync (#2606) — an N-repo
 // group fans out to 6+ extractors each calling these, so an uncached
