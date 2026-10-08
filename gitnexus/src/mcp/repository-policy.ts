@@ -209,6 +209,9 @@ export class McpRepositoryPolicy {
       await backend.selectToolRepository(undefined, undefined, {
         allowCwdDefault: true,
         refreshRegistry: true,
+        // Read tools also answer for an unindexed linked worktree of a
+        // registered repo; mutating tools still require `repo` (below).
+        allowWorktreeFallback: true,
       });
     } catch {
       return { readOnlyRequiresRepo: true, mutatingRequiresRepo: true };

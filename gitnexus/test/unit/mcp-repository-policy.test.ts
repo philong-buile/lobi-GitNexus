@@ -157,6 +157,7 @@ describe('MCP repository policy', () => {
     expect(backend.selectToolRepository).toHaveBeenCalledWith(undefined, undefined, {
       allowCwdDefault: true,
       refreshRegistry: true,
+      allowWorktreeFallback: true,
     });
   });
 

@@ -59,9 +59,10 @@ import {
   hunksOverlapRange,
   findGitRootByDotGit,
   getCanonicalRepoRoot,
+  getCurrentCommit,
   getGitRoot,
 } from '../../storage/git.js';
-import { realpathSync } from 'fs';
+import { existsSync, realpathSync } from 'fs';
 import { parseGrepQuery, GREP_TIME_BUDGET_MS } from '../../server/grep-params.js';
 import { runGrepScanInWorker } from '../../server/grep-scan.js';
 import {
@@ -1197,6 +1198,19 @@ interface RepoHandle {
   branch?: string;
   /** Pinned `--branch` sub-indexes available for this repo, distinct from the flat workspace slot (#2106/#2354). */
   branches?: BranchSummary[];
+  /**
+   * Set only on a read-only fallback: the git root of an unindexed linked
+   * worktree this handle is answering for, while the index itself belongs to
+   * `repoPath`, a sibling worktree of the same repository. Staleness is then
+   * measured against this worktree's HEAD, and `detect_changes` diffs here.
+   */
+  servedFor?: string;
+}
+
+/** `tryRealpath`, case-folded on Windows: the form in which two paths compare equal. */
+function comparablePath(p: string): string {
+  const canonical = tryRealpath(p);
+  return process.platform === 'win32' ? canonical.toLowerCase() : canonical;
 }
 
 /** Resolve symlinks for path comparison; falls back to path.resolve on error.
@@ -1681,6 +1695,11 @@ export class LocalBackend {
   // the other; lbugPath is unique per flat/branch index.
   private toolStalenessCache: Map<string, { at: number; value: Promise<StalenessInfo> }> =
     new Map();
+  /** `worktreeFallback` git identity per path; see `gitTopology`. */
+  private gitTopologyCache = new Map<
+    string,
+    { root: string; rootPath: string; common: string } | null
+  >();
   // tri-review Residual-2: consolidates what were three parallel per-poolKey
   // Maps (lastObservedIndexedAt / lastObservedDbIdentity / lastObservedFtsStatus)
   // touched in lockstep at every call site below — one Map, one delete, one
@@ -2161,9 +2180,19 @@ export class LocalBackend {
   async selectToolRepository(
     repoParam?: string,
     branch?: string,
-    options: { allowCwdDefault?: boolean; refreshRegistry?: boolean } = {},
+    options: {
+      allowCwdDefault?: boolean;
+      refreshRegistry?: boolean;
+      /**
+       * Read-only callers only: let a path (or cwd) inside an unindexed linked
+       * worktree resolve to a sibling worktree's index, marked with `servedFor`.
+       * Never set for writes — `rename` must edit the checkout it was asked for.
+       */
+      allowWorktreeFallback?: boolean;
+    } = {},
   ): Promise<RepoHandle> {
     const allowCwdDefault = options.allowCwdDefault === true;
+    const allowWorktreeFallback = options.allowWorktreeFallback === true;
     const mayRefresh = options.refreshRegistry !== false;
     let refreshed = false;
 
@@ -2177,7 +2206,7 @@ export class LocalBackend {
 
     let result: RepoHandle | null;
     try {
-      result = this.resolveRepoFromCache(repoParam, allowCwdDefault);
+      result = this.resolveRepoFromCache(repoParam, allowCwdDefault, allowWorktreeFallback);
     } catch (err) {
       if (!(err instanceof RegistryAmbiguousTargetError)) throw err;
       if (!mayRefresh || refreshed) throw err;
@@ -2185,7 +2214,7 @@ export class LocalBackend {
       // once before re-throwing so a resolved registry can disambiguate (#1658).
       await this.refreshRepos();
       refreshed = true;
-      result = this.resolveRepoFromCache(repoParam, allowCwdDefault);
+      result = this.resolveRepoFromCache(repoParam, allowCwdDefault, allowWorktreeFallback);
     }
 
     // Explicit misses retain the existing one-refresh retry. Omitted targets
@@ -2193,7 +2222,7 @@ export class LocalBackend {
     if (!result && mayRefresh && !refreshed) {
       await this.refreshRepos();
       refreshed = true;
-      result = this.resolveRepoFromCache(repoParam, allowCwdDefault);
+      result = this.resolveRepoFromCache(repoParam, allowCwdDefault, allowWorktreeFallback);
     }
 
     if (result) {
@@ -2378,7 +2407,11 @@ export class LocalBackend {
    * Throws {@link RegistryAmbiguousTargetError} when `repoParam` matches
    * multiple handles by name and cwd cannot disambiguate (#1658).
    */
-  private resolveRepoFromCache(repoParam?: string, allowCwdDefault = false): RepoHandle | null {
+  private resolveRepoFromCache(
+    repoParam?: string,
+    allowCwdDefault = false,
+    allowWorktreeFallback = false,
+  ): RepoHandle | null {
     if (this.repos.size === 0) return null;
 
     if (repoParam) {
@@ -2402,6 +2435,9 @@ export class LocalBackend {
       if (looksLikePath) {
         const pathMatch = resolvePathMatch();
         if (pathMatch) return pathMatch;
+        // A subdirectory of an indexed checkout, or an unindexed linked worktree.
+        const worktreeMatch = allowWorktreeFallback ? this.worktreeFallback(repoParam) : null;
+        if (worktreeMatch) return worktreeMatch;
       }
 
       // Exact name before id — the first duplicate sibling keeps id === name
@@ -2442,7 +2478,10 @@ export class LocalBackend {
     }
 
     if (this.repos.size === 1) {
-      return this.repos.values().next().value!;
+      const only = this.repos.values().next().value!;
+      // Same repo either way, but when cwd is an unindexed worktree of it the
+      // answer must say so instead of reading as current (measured at `only`).
+      return (allowWorktreeFallback && this.worktreeFallback(process.cwd())) || only;
     }
 
     if (allowCwdDefault) {
@@ -2450,7 +2489,67 @@ export class LocalBackend {
       if (cwdPick) return cwdPick;
     }
 
+    if (allowWorktreeFallback) {
+      const worktreeMatch = this.worktreeFallback(process.cwd());
+      if (worktreeMatch) return worktreeMatch;
+    }
+
     return null; // Multiple repos, no param — ambiguous
+  }
+
+  /**
+   * Resolve `target` (a path) through git worktree identity instead of exact
+   * path equality.
+   *
+   * - `target` inside an indexed checkout (e.g. a subdirectory) → that
+   *   checkout's handle, unchanged.
+   * - `target` inside an UNINDEXED linked worktree → a registered sibling
+   *   worktree of the same repository (same git common dir), copied with
+   *   `servedFor` set to the target's git root. Preference: the sibling indexed
+   *   at the target's HEAD, then the main checkout, then the first sibling.
+   * - Anything else (not git, unrelated repository, nested independent
+   *   checkout) → null, so the caller's existing miss handling applies.
+   *
+   * Read-only callers only (see `allowWorktreeFallback`).
+   */
+  private worktreeFallback(target: string): RepoHandle | null {
+    const want = this.gitTopology(target);
+    if (!want) return null;
+    const handles = [...this.repos.values()];
+    const exact = handles.find((h) => comparablePath(h.repoPath) === want.root);
+    if (exact) return exact;
+
+    const siblings = handles.filter((h) => this.gitTopology(h.repoPath)?.common === want.common);
+    if (siblings.length === 0) return null;
+    const head = siblings.length > 1 ? getCurrentCommit(want.rootPath) : '';
+    const pick =
+      (head && siblings.find((h) => h.lastCommit === head)) ||
+      siblings.find((h) => comparablePath(h.repoPath) === want.common) ||
+      siblings[0];
+    return { ...pick, servedFor: want.rootPath };
+  }
+
+  /**
+   * Git root and canonical repo root (parent of the shared git common dir) for
+   * a path, both in comparable form, plus the root as git printed it. Memoized:
+   * a path's repository identity does not change while the server runs.
+   * ponytail: never evicted — one small entry per distinct path asked about.
+   */
+  private gitTopology(target: string): { root: string; rootPath: string; common: string } | null {
+    const key = comparablePath(target);
+    if (this.gitTopologyCache.has(key)) return this.gitTopologyCache.get(key)!;
+    let topology: { root: string; rootPath: string; common: string } | null = null;
+    const rootPath = existsSync(target) ? getGitRoot(target) : null;
+    const common = rootPath ? getCanonicalRepoRoot(rootPath) : null;
+    if (rootPath && common) {
+      topology = {
+        root: comparablePath(rootPath),
+        rootPath: tryRealpath(rootPath),
+        common: comparablePath(common),
+      };
+    }
+    this.gitTopologyCache.set(key, topology);
+    return topology;
   }
 
   /**
@@ -2886,6 +2985,7 @@ export class LocalBackend {
       branch: repo.branch,
       lastCommit: repo.lastCommit,
       indexedAt: repo.indexedAt,
+      ...(repo.servedFor ? { servedFrom: repo.repoPath } : {}),
     });
   }
 
@@ -2902,7 +3002,10 @@ export class LocalBackend {
    */
   private stalenessForTool(repo: RepoHandle): Promise<StalenessInfo> {
     const now = Date.now();
-    const cached = this.toolStalenessCache.get(repo.lbugPath);
+    // A worktree fallback measures the sibling's index against the caller's
+    // worktree HEAD, so it needs its own entry next to the sibling's.
+    const key = repo.servedFor ? `${repo.lbugPath}|${repo.servedFor}` : repo.lbugPath;
+    const cached = this.toolStalenessCache.get(key);
     if (cached && now - cached.at < LocalBackend.TOOL_STALENESS_TTL_MS) {
       return cached.value;
     }
@@ -2917,14 +3020,16 @@ export class LocalBackend {
       // Only evict if THIS entry is still current — a later call may have
       // installed a fresh (resolving) entry for the same key before a slow
       // rejection lands, and that newer entry must not be dropped.
-      value: Promise.resolve(checkStalenessAsync(repo.repoPath, repo.lastCommit)).catch((err) => {
-        if (this.toolStalenessCache.get(repo.lbugPath) === entry) {
-          this.toolStalenessCache.delete(repo.lbugPath);
+      value: Promise.resolve(
+        checkStalenessAsync(repo.servedFor ?? repo.repoPath, repo.lastCommit),
+      ).catch((err) => {
+        if (this.toolStalenessCache.get(key) === entry) {
+          this.toolStalenessCache.delete(key);
         }
         throw err;
       }),
     };
-    this.toolStalenessCache.set(repo.lbugPath, entry);
+    this.toolStalenessCache.set(key, entry);
     return entry.value;
   }
 
@@ -2975,7 +3080,7 @@ export class LocalBackend {
     const repo = await this.selectToolRepository(
       p.repo as string | undefined,
       p.branch as string | undefined,
-      { allowCwdDefault: method !== 'rename' },
+      { allowCwdDefault: method !== 'rename', allowWorktreeFallback: method !== 'rename' },
     );
 
     switch (method) {
@@ -6383,14 +6488,15 @@ export class LocalBackend {
       // Resolution order (see resolveWorktreeCwd for details):
       //   1. params.worktree — explicit override, validated against the
       //      registered repo's canonical root.
-      //   2. Auto-detect — if the server's launch cwd (process.cwd()) is a
-      //      linked worktree of the same canonical repo, use its git root.
+      //   2. Auto-detect — the unindexed worktree a fallback handle is serving
+      //      (repo.servedFor), else the server's launch cwd (process.cwd()) when
+      //      it is a linked worktree of the same canonical repo; its git root.
       //   3. repo.repoPath — fallback (original behaviour, handled inside
       //      resolveWorktreeCwd when no worktree is detected).
       //
       // Start with the auto-detected value; override with the validated
       // explicit param when provided. This avoids a dead initial assignment.
-      let diffCwd = resolveWorktreeCwd(repo.repoPath, process.cwd());
+      let diffCwd = resolveWorktreeCwd(repo.repoPath, repo.servedFor ?? process.cwd());
       if (params.worktree) {
         if (!path.isAbsolute(params.worktree)) {
           return {

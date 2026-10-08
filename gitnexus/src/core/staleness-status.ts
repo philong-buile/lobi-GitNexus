@@ -77,6 +77,11 @@ export interface IndexedRef {
   branch?: string;
   lastCommit: string;
   indexedAt: string;
+  /**
+   * Checkout whose index answered, set only when that is a sibling worktree of
+   * the (unindexed) worktree the caller asked about. See {@link StalenessPayload.servedFrom}.
+   */
+  servedFrom?: string;
 }
 
 /**
@@ -109,12 +114,24 @@ export interface StalenessPayload {
   indexedAt?: string;
   /**
    * What `commitsBehind` is counted against: the checked-out HEAD of the clone
-   * this index was built from, never the remote or the default branch.
+   * this index was built from — or, when `servedFrom` is set, of the worktree
+   * the caller asked about — never the remote or the default branch.
    */
   measuredAgainst?: 'HEAD';
   commitsBehind?: number;
   hint?: string;
+  /**
+   * Present when the asked-about linked worktree has no index of its own and a
+   * sibling worktree of the same repository answered: the sibling's path. The
+   * graph is then that sibling's commit, measured against the asked-about HEAD.
+   */
+  servedFrom?: string;
 }
+
+/** Hint for a worktree fallback; replaces nothing, it is appended to any freshness hint. */
+const servedFromHint = (servedFrom: string): string =>
+  `This worktree has no index of its own; answered from sibling worktree ${servedFrom}. ` +
+  'Run `gitnexus analyze --index-only` in this worktree for an exact graph.';
 
 /**
  * Project a check into {@link StalenessPayload}, or `undefined` when there is
@@ -150,6 +167,15 @@ export const stalenessPayload = (
     indexedAt: opts.ref.indexedAt,
     measuredAgainst: 'HEAD' as const,
   };
+  if (opts.ref.servedFrom) {
+    // A fallback is worth saying even when the sibling's commit is current.
+    const text = [info.hint, servedFromHint(opts.ref.servedFrom)].filter(Boolean).join(' ');
+    const served = { hint: text, servedFrom: opts.ref.servedFrom };
+    if (status === 'current' || status === 'unknown' || status === 'diverged') {
+      return { status, ...ref, ...served };
+    }
+    return { status, ...ref, commitsBehind: info.commitsBehind, ...served };
+  }
   if (status === 'current' || status === 'unknown') return { status, ...ref };
   if (status === 'diverged') return { status, ...ref, ...hint };
   return { status, ...ref, commitsBehind: info.commitsBehind, ...hint };
