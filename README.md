@@ -147,6 +147,50 @@ npx vitest run test/unit/worktree-repo-fallback.test.ts
 npx tsc --noEmit
 ```
 
+## A/B evaluation
+
+One real coding task, run twice in parallel by a headless agent: once with upstream GitNexus, once with this fork.
+
+**Task.** A follow-up to a code-review comment on a Python web backend (FastAPI). An app-wide auth guard compared its public-route allowlist against the router-local route path, so a route on a prefixed router could match a public entry. Fix it, update two stale comments, and add a regression test.
+
+**Setup.** Same prompt, same model (`claude -p --model opus`, resolved to `claude-opus-5`, Claude Code 2.1.263), Windows 11, `--strict-mcp-config` with only the gitnexus MCP server. Each agent started in its own fresh linked worktree at the same commit, and that worktree was **not indexed**, which is the normal state for a worktree created moments ago.
+
+- **A, upstream 1.6.4** (npm global): the global registry held other worktrees of the same repo at various commits. One sibling, `worktree-S`, was at the same HEAD and held another session's uncommitted edits to the same files.
+- **B, lobi** (1.6.12 base plus the worktree fallback, `a7063a26`): its own `GITNEXUS_HOME`, with one sibling indexed at the same HEAD (`analyze`: 72.9 s, about 21.8k nodes and 51k edges; the first attempt failed with "Analyzer build changed while its identity was being computed" and a plain retry succeeded).
+
+| | A: upstream 1.6.4 | B: lobi |
+|---|---|---|
+| Cost | $2.31 | $2.52 |
+| Wall time | 256 s | 250 s |
+| Turns | 25 | 25 |
+| gitnexus calls / errors | 6 / 0 | 5 / 0 |
+| Tests | 38 passed | 38 passed |
+| `detect_changes` diffed | **`worktree-S`** (someone else's edits) | the agent's own worktree |
+
+**What happened.**
+
+- A found no index for its own worktree, so it passed `worktree-S`'s path as `repo`. `context` and `impact` were fine: at the same commit the graph is identical.
+- `detect_changes` then diffed `worktree-S`'s working tree and reported another session's uncommitted changes as the agent's own. It listed a variable `route` as touched; only `worktree-S`'s diff removed that line, while the agent's own diff kept it. The agent explained the mismatch away as "line-offset drift" and reported success. A silent wrong answer.
+- B called `detect_changes(worktree=<own path>)`. The sibling's index answered, but the diff was the agent's own tree: its changed symbols and affected processes matched the agent's real edits.
+- In both arms `impact` returned 0 upstream callers for a function reached only through a dependency-injection reference (`Depends(fn)`). Both agents fell back to grep. The fork does not change that.
+
+**Limits.**
+
+- n = 1 per arm. This is an anecdote, not a benchmark.
+- The arms differ in version (1.6.4 vs a 1.6.12 base), so the difference is not only the fallback feature.
+- User-level Claude Code hooks were active in both arms.
+- The fair claim is about the correctness of `detect_changes` in an unindexed worktree. Cost and time are within noise; no claim about speed or cost.
+
+**Reproduce.** Create two fresh worktrees at one commit, leave them unindexed, and index a sibling worktree of the same repo (for arm A, ideally one with uncommitted edits). Give each arm an MCP config with only gitnexus (arm B sets `GITNEXUS_HOME` to its own directory), then run:
+
+```bash
+claude -p "$(cat prompt.md)" --model opus --strict-mcp-config --mcp-config mcp-<arm>.json \
+  --output-format stream-json --verbose > <arm>.jsonl
+python docs/fork/ab-eval/analyze.py upstream.jsonl lobi.jsonl
+```
+
+[`analyze.py`](docs/fork/ab-eval/analyze.py) prints cost, duration, turns, tool counts and each `detect_changes` changed-symbol list. The transcripts and prompt are not published because they contain a private codebase.
+
 ## Everything else is GitNexus
 
 Apart from worktree handling, this fork is GitNexus 1.6.12:
