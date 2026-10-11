@@ -1,5 +1,5 @@
 /**
- * Dart type extractor — full implementation following type-resolution-system.md.
+ * Dart type extractor — full implementation following docs/design/type-resolution-system.md.
  *
  * Tier 0: Explicit type annotations (User user = ...)
  * Tier 0b: For-loop element types (for (var u in users))
