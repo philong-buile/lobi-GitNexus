@@ -2135,16 +2135,23 @@ describe('gitnexus review-agent workflow security contract', () => {
       const dir = mkdtempSync(path.join(tmpdir(), 'npm-ci-retry-'));
       const counter = path.join(dir, 'attempts');
       writeFileSync(counter, '');
+      // The counter path reaches the stub through a quoted env var: spliced in
+      // unquoted, bash ate the backslashes of a Windows temp path and wrote the
+      // counter to a relative file in the cwd. Forward slashes keep Git Bash happy.
       writeFileSync(
         path.join(dir, 'npm'),
-        `#!/usr/bin/env bash\nprintf 'x' >> ${counter}\nattempts=$(wc -c < ${counter})\n` +
+        `#!/usr/bin/env bash\nprintf 'x' >> "$NPM_STUB_COUNTER"\nattempts=$(wc -c < "$NPM_STUB_COUNTER")\n` +
           `if [ "$attempts" -le ${failures} ]; then exit 1; fi\nexit 0\n`,
         { mode: 0o755 },
       );
       writeFileSync(path.join(dir, 'sleep'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
       const result = spawnSync('bash', [script, 'test runtime', dir, path.join(dir, '.npmrc')], {
         encoding: 'utf8',
-        env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}` },
+        env: {
+          ...process.env,
+          NPM_STUB_COUNTER: counter.replaceAll('\\', '/'),
+          PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}`,
+        },
       });
       const attempts = readFileSync(counter, 'utf8').length;
       rmSync(dir, { recursive: true, force: true });
