@@ -191,6 +191,32 @@ python docs/fork/ab-eval/analyze.py upstream.jsonl lobi.jsonl
 
 [`analyze.py`](docs/fork/ab-eval/analyze.py) prints cost, duration, turns, tool counts and each `detect_changes` changed-symbol list. The transcripts and prompt are not published because they contain a private codebase.
 
+## Deterministic worktree benchmark
+
+The A/B run above is one anecdote. This is a repeatable, LLM-free check of the same failure: `gitnexus/test/integration/worktree-tools-benchmark.test.ts`. It builds a three-file TypeScript repo with real git, indexes only the `main` checkout with the real `analyze`, then asks the MCP read tools about two linked worktrees that have no index (`wt-agent`, detached at the same commit with an uncommitted edit to `add`; `wt-ahead`, one commit ahead with an uncommitted edit to `total`). `main` also carries someone else's uncommitted edit to `mul`. Answers are graded against what the fixture says they must be: `correct`, `error`, or `silent-wrong`.
+
+- **lobi**: default behavior, worktree fallback on.
+- **upstream-behavior**: `callTool(..., { worktreeFallback: false })`. If that errors, retry once with `repo` set to the indexed sibling, as the agent did in the A/B run.
+
+Only the lobi arm is asserted; the other arm is measured, not guarded.
+
+```bash
+cd gitnexus && npm run build
+GITNEXUS_E2E_CLI=dist GITNEXUS_BENCH=1 npx vitest run test/integration/worktree-tools-benchmark.test.ts --reporter=verbose
+```
+
+JSON goes to `$GITNEXUS_BENCH_OUT` (default `<tmpdir>/gitnexus-worktree-bench.json`). Results, Windows 11, Node v24.14.0, gitnexus 1.6.12; `analyze` took about 31 s for a 10-node, 17-edge graph (19.8 kB of index). Median of 5 calls:
+
+| Scenario | lobi | ms | upstream-behavior | ms |
+|---|---|---|---|---|
+| D1 `detect_changes` on indexed `main` (expect `mul`) | correct | 650 | correct | 656 |
+| D2 `detect_changes` on `wt-agent` (expect `add`) | correct | 126 | silent-wrong (`mul`, main's diff) | 690 |
+| D3 `detect_changes` on `wt-ahead` (expect `total`) | correct, flagged `behind` by 1 | 159 | silent-wrong (`mul`) | 670 |
+| I1 `impact add` upstream from `wt-agent` | correct | 202 | correct (after retry) | 192 |
+| C1 `context total` from `wt-ahead` | correct | 234 | correct (after retry) | 172 |
+
+Read-only graph lookups survive the retry because the graph is the same at the same commit. `detect_changes` does not: the retry diffs the sibling's working tree, so it reports another checkout's edits with no error. Latencies are for a toy repo and mostly show per-call overhead.
+
 ## Everything else is GitNexus
 
 Apart from worktree handling, this fork is GitNexus 1.6.12:
