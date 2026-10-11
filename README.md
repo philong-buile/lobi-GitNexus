@@ -198,7 +198,7 @@ The A/B run above is one anecdote. This is a repeatable, LLM-free check of the s
 - **lobi**: default behavior, worktree fallback on.
 - **upstream-behavior**: `callTool(..., { worktreeFallback: false })`. If that errors, retry once with `repo` set to the indexed sibling, as the agent did in the A/B run.
 
-Only the lobi arm is asserted; the other arm is measured, not guarded.
+Only the lobi arm is asserted; the other arm is measured, not guarded. The upstream-behavior arm runs this fork's code with the fallback switched off, not an upstream release, so it isolates the fallback rather than every difference between versions. Its timings include the failed first call plus the retry, which is what an agent pays.
 
 ```bash
 cd gitnexus && npm run build
