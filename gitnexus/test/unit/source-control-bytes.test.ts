@@ -461,7 +461,7 @@ describe('source hygiene', () => {
     expect(collected.filter((rel) => rel.endsWith('.node'))).toEqual([]);
     expect(collected.filter((rel) => rel.endsWith('.png'))).toEqual([]);
     expect(isScannedTextFile('gitnexus/prebuilds/linux-x64/tree-sitter-kotlin.node')).toBe(false);
-    expect(isScannedTextFile('Documentation/docs-asset/kilo-code-mcp.png')).toBe(false);
+    expect(isScannedTextFile('docs/guides/docs-asset/kilo-code-mcp.png')).toBe(false);
   });
 
   it('skips the vendored grammar tree without dropping first-party `vendor` paths', () => {
