@@ -24,6 +24,7 @@ import { parseTruthyEnv } from '../ingestion/utils/env.js';
 import { SYMBOL_NODE_LABELS } from '../ingestion/utils/symbol-labels.js';
 import { applyCjkSegmentationIfEnabled } from '../search/cjk-segmentation.js';
 import { isNotebookPath, notebookPythonSnippet } from '../ingestion/ipynb-extractor.js';
+import { isDataFilePath } from '../ingestion/data-file-processor.js';
 
 /** Computed once — `RELATION_SCHEMA` is a static template literal. Exported so
  *  the streamed sinks (`GraphEmitSink`, `PdgEmitSink`) share this parse
@@ -308,6 +309,15 @@ const extractContent = async (
   // File content is intentionally lazy-read for full indexes. Do not let this
   // compatibility path recreate source text that the selected profile forbids.
   if (contentRetention === 'none' || (contentRetention === 'symbol' && node.label === 'File')) {
+    return '';
+  }
+  // Delimited data files hold rows that may be private data: neither the
+  // file's text nor a line-span snippet around its structure nodes is stored.
+  if (
+    node.label === 'DataFile' ||
+    node.label === 'DataColumn' ||
+    (node.label === 'File' && isDataFilePath(String(node.properties.filePath ?? '')))
+  ) {
     return '';
   }
   const filePath = node.properties.filePath;
@@ -614,7 +624,10 @@ export const streamAllCSVsToDisk = async (
       'Constructor',
       'Template',
       'Module',
+      'DataFile',
+      'DataColumn',
     ] as const;
+    const dataFileHeader = `${multiLangHeader},rowCount,columnCount,delimiter`;
     const propertyHeader =
       'id,name,filePath,startLine,endLine,content,description,declaredType,isDetail';
     const multiLangWriters = new Map<string, BufferedCSVWriter>();
@@ -623,7 +636,13 @@ export const streamAllCSVsToDisk = async (
         t,
         new BufferedCSVWriter(
           path.join(csvDir, `${t.toLowerCase()}.csv`),
-          t === 'Property' ? propertyHeader : t === 'Const' ? constHeader : multiLangHeader,
+          t === 'Property'
+            ? propertyHeader
+            : t === 'Const'
+              ? constHeader
+              : t === 'DataFile'
+                ? dataFileHeader
+                : multiLangHeader,
         ),
       );
     }
@@ -867,7 +886,13 @@ export const streamAllCSVsToDisk = async (
                       ]
                     : node.label === 'Const'
                       ? [escapeCSVField(String(node.properties.convexEndpointFactory ?? ''))]
-                      : []),
+                      : node.label === 'DataFile'
+                        ? [
+                            escapeCSVNumber(node.properties.rowCount as number | undefined, 0),
+                            escapeCSVNumber(node.properties.columnCount as number | undefined, 0),
+                            escapeCSVField(String(node.properties.delimiter ?? '')),
+                          ]
+                        : []),
                 ].join(','),
               );
             } else {

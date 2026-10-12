@@ -45,6 +45,9 @@ export type NodeLabel =
   | 'Constructor'
   | 'Template'
   | 'Section'
+  // Delimited data files (.csv/.tsv): structure only, never cell values.
+  | 'DataFile'
+  | 'DataColumn'
   | 'Route'
   | 'Tool'
   /**

@@ -45,6 +45,7 @@ const TYPE_TO_RING: Record<string, number> = {
   // Ring 1 – files
   File: 1,
   Section: 1,
+  DataFile: 1,
   Import: 1,
   Route: 1,
   Tool: 1,

@@ -46,6 +46,9 @@ export const NODE_TABLES = [
   'Destination',
   // Taint/PDG substrate (issue #2080) — inert until M1 (#2081) emits blocks.
   'BasicBlock',
+  // Delimited data files (.csv/.tsv) — header structure only, never cell values.
+  'DataFile',
+  'DataColumn',
 ] as const;
 
 export type NodeTableName = (typeof NODE_TABLES)[number];

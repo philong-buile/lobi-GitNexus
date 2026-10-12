@@ -142,11 +142,14 @@ describe('shouldIgnorePath', () => {
       '.key',
       '.crt',
       // Data files
-      '.csv',
       '.parquet',
       '.pkl',
     ])('ignores files with %s extension', (ext) => {
       expect(shouldIgnorePath(`assets/file${ext}`)).toBe(true);
+    });
+
+    it.each(['.csv', '.tsv', '.CSV'])('keeps %s data files (indexed by structure only)', (ext) => {
+      expect(shouldIgnorePath(`data/file${ext}`)).toBe(false);
     });
   });
 

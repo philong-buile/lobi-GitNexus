@@ -67,6 +67,8 @@ const NON_DEFINITION_LABELS: readonly NodeTableName[] = [
   'Destination',
   'Folder',
   'BasicBlock',
+  'DataFile',
+  'DataColumn',
 ];
 
 /**

@@ -501,6 +501,8 @@ export const VALID_NODE_LABELS = new Set([
   'Route',
   'Tool',
   'Destination',
+  'DataFile',
+  'DataColumn',
 ]);
 
 /** Valid relation types for impact analysis filtering */

@@ -24,6 +24,7 @@ const TYPE_TO_LAYER: Record<string, number> = {
   // Layer 1: Files
   File: 1,
   Section: 1,
+  DataFile: 1,
   Import: 1,
   Route: 1,
   Tool: 1,

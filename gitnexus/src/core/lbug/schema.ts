@@ -323,6 +323,24 @@ CREATE NODE TABLE Section (
   PRIMARY KEY (id)
 )`;
 
+// Delimited data files (.csv/.tsv). The code-element shape plus the counts;
+// `content` stays empty — cell values are never stored.
+export const DATA_FILE_SCHEMA = `
+CREATE NODE TABLE DataFile (
+  id STRING,
+  name STRING,
+  filePath STRING,
+  startLine INT64,
+  endLine INT64,
+  content STRING,
+  description STRING,
+  rowCount INT64,
+  columnCount INT64,
+  delimiter STRING,
+  PRIMARY KEY (id)
+)`;
+export const DATA_COLUMN_SCHEMA = CODE_ELEMENT_BASE('DataColumn');
+
 // Taint/PDG substrate (issue #2080) — intra-procedural control-flow node.
 // Emitted by no phase yet; M1 (#2081) populates these behind an opt-in.
 // REACHING_DEF carries its variable name in the relation's existing `reason`
@@ -405,6 +423,10 @@ const SCOPE_BRIDGE_TARGET_LABELS: ReadonlySet<NodeLabel> = new Set<NodeLabel>([
  *  - `Folder` is a filesystem container (`Folder→Folder` / `Folder→File` only).
  *  - `BasicBlock` is the PDG substrate (`BasicBlock→BasicBlock` only; measured
  *    over 300k PDG edges, no other pair is emitted).
+ *  - `DataFile` / `DataColumn` describe a .csv/.tsv file's structure. Only
+ *    `pipeline-phases/data-files.ts` emits edges to them, and only from `File`
+ *    or `DataFile`, so their pairs are hand-declared in
+ *    {@link STRUCTURAL_PAIR_DDL}.
  */
 const NON_DEFINITION_LABELS: readonly NodeTableName[] = [
   'Community',
@@ -414,6 +436,8 @@ const NON_DEFINITION_LABELS: readonly NodeTableName[] = [
   'Destination',
   'Folder',
   'BasicBlock',
+  'DataFile',
+  'DataColumn',
 ];
 
 /**
@@ -577,6 +601,9 @@ export const STRUCTURAL_PAIR_DDL = `  FROM File TO Folder,
   FROM File TO \`Static\`,
   FROM File TO \`Template\`,
   FROM File TO Section,
+  FROM File TO DataFile,
+  FROM File TO DataColumn,
+  FROM DataFile TO DataColumn,
   FROM Folder TO Folder,
   FROM Folder TO File,
   FROM Function TO \`Template\`,
@@ -784,6 +811,9 @@ export const NODE_SCHEMA_QUERIES = [
   // from NODE_SCHEMA_QUERIES. Omitting this leaves the BasicBlock table
   // uncreated and the bulk-COPY round-trip fails with "table does not exist".
   BASICBLOCK_SCHEMA,
+  // Delimited data files (.csv/.tsv)
+  DATA_FILE_SCHEMA,
+  DATA_COLUMN_SCHEMA,
 ];
 
 export const REL_SCHEMA_QUERIES = [RELATION_SCHEMA];

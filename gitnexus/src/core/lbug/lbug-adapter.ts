@@ -1757,6 +1757,9 @@ export const getCopyQuery = (table: NodeTableName, filePath: string): string => 
   if (table === 'Const') {
     return `COPY ${t}(id, name, filePath, startLine, endLine, content, description, convexEndpointFactory) FROM "${filePath}" ${COPY_CSV_OPTS}`;
   }
+  if (table === 'DataFile') {
+    return `COPY ${t}(id, name, filePath, startLine, endLine, content, description, rowCount, columnCount, delimiter) FROM "${filePath}" ${COPY_CSV_OPTS}`;
+  }
   // TypeScript/JS code element tables have isExported; multi-language tables do not
   if (TABLES_WITH_EXPORTED.has(table)) {
     return `COPY ${t}(id, name, filePath, startLine, endLine, isExported, content, description) FROM "${filePath}" ${COPY_CSV_OPTS}`;
