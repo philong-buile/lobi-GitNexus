@@ -22,6 +22,8 @@ export const NODE_COLORS: Record<NodeLabel, string> = {
   Community: '#818cf8', // Indigo light - cluster indicator
   Process: '#f43f5e', // Rose - execution flow indicator
   Section: '#60a5fa', // Blue light - structural section
+  DataFile: '#34d399', // Green - delimited data file
+  DataColumn: '#6ee7b7', // Light green - data column
   Struct: '#f59e0b', // Amber - like Class
   Trait: '#ec4899', // Pink - like Interface
   Impl: '#14b8a6', // Teal - like Method
@@ -67,6 +69,8 @@ export const NODE_SIZES: Record<NodeLabel, number> = {
   Community: 0, // Hidden by default - metadata node
   Process: 0, // Hidden by default - metadata node
   Section: 8, // Structural section - similar to Folder
+  DataFile: 8,
+  DataColumn: 4,
   Struct: 8, // Like Class
   Trait: 7, // Like Interface
   Impl: 3, // Like Method

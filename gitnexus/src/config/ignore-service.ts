@@ -257,8 +257,8 @@ const IGNORED_EXTENSIONS = new Set([
   '.pfx',
 
   // Data files (often large/binary)
-  '.csv',
-  '.tsv',
+  // .csv/.tsv are indexed by structure only (pipeline-phases/data-files.ts);
+  // opt out with `*.csv` / `*.tsv` in .gitnexusignore.
   '.parquet',
   '.avro',
   '.feather',
