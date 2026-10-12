@@ -124,11 +124,10 @@ const NUMERIC = /^[-+]?(\d+([.,]\d+)*|\d*\.\d+)([eE][-+]?\d+)?%?$/;
  * (non-empty, unique, ≤64 chars, starts with a letter or `_`, no `@`), there
  * must be at least one data row, and — modelled on Python's
  * csv.Sniffer.has_header — the sampled data rows must
- * disagree with it somewhere: a column that is numeric below a non-numeric
- * name, or a column of constant width (over at least two values) that
- * differs from the name's width.
- * A text-only file with no such signal gets no columns: it may be headerless,
- * and its first row would then be private data.
+ * disagree with it: a header needs at least one column that is numeric below a
+ * non-numeric name. Constant-width text alone is not enough, since short codes
+ * like country names fake it, so text-only files get no columns: they may be
+ * headerless, and their first row would then be private data.
  */
 export const looksLikeHeader = (header: string[], sample: string[][]): boolean => {
   const names = header.map((h) => h.trim());
@@ -142,20 +141,15 @@ export const looksLikeHeader = (header: string[], sample: string[][]): boolean =
   // plausible header and a plausible private record. Index no columns.
   if (sample.length === 0) return false;
 
-  let votes = 0;
+  let numericVotes = 0;
   for (let c = 0; c < names.length; c++) {
     const values = sample.map((r) => (r[c] ?? '').trim()).filter((v) => v !== '');
     if (values.length === 0) continue;
     if (values.every((v) => NUMERIC.test(v))) {
-      votes++;
-      continue;
+      numericVotes++;
     }
-    // One value is always "constant width" — the width signal needs two.
-    const width = values[0].length;
-    if (values.length >= 2 && values.every((v) => v.length === width) && width !== names[c].length)
-      votes++;
   }
-  return votes > 0;
+  return numericVotes > 0;
 };
 
 export interface DataColumnRef {

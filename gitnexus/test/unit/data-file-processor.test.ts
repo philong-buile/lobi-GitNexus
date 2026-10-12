@@ -72,6 +72,18 @@ describe('sniffDelimiter', () => {
 });
 
 describe('looksLikeHeader', () => {
+  it('rejects text rows when too few columns give header evidence', () => {
+    expect(
+      looksLikeHeader(
+        ['Alice Johnson', 'Smith LLC', 'USA'],
+        [
+          ['Bob Lee', 'Acme Inc', 'UK'],
+          ['Cara Diaz', 'Foo Corp', 'UK'],
+        ],
+      ),
+    ).toBe(false);
+  });
+
   it('accepts a named header over numeric data', () => {
     expect(looksLikeHeader(['id', 'name'], [['1', 'Alice']])).toBe(true);
   });

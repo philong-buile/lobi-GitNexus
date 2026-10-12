@@ -103,4 +103,24 @@ describe('WikiGenerator DB pinning', () => {
       closeWikiDbMock.mock.invocationCallOrder[0],
     );
   });
+
+  it('keeps CSV contents out of LLM source prompts', async () => {
+    await fs.writeFile(path.join(repoPath, 'people.csv'), 'name\nSECRET_CELL\n');
+    const { WikiGenerator } = await import('../../src/core/wiki/generator.js');
+    const generator = new WikiGenerator(repoPath, storagePath, lbugPath, {
+      provider: 'openai',
+      model: 'test-model',
+      baseUrl: 'http://127.0.0.1:1/v1',
+      apiKey: 'test',
+      maxTokens: 1024,
+      temperature: 0,
+    });
+    const files = ['src/index.ts', 'people.csv'];
+    const source = await (generator as any).readSourceFiles(files);
+    expect(source).toContain('export const value');
+    expect(source).not.toContain('SECRET_CELL');
+    expect(source).not.toContain('people.csv');
+    const tokens = await (generator as any).estimateModuleTokens(files);
+    expect(tokens).toBe(await (generator as any).estimateModuleTokens(['src/index.ts']));
+  });
 });
