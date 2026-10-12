@@ -218,6 +218,29 @@ Modeled on [token-savior's tsbench](https://github.com/mibayy/token-savior#repro
 
 **v1** (8 easier tasks, one indexed repository, 3 passes, $2.64): all three arms scored 24/24, and both MCP arms cost 57-59% less than plain and took about a quarter of the turns. With one repository indexed, upstream resolves a fresh worktree to it, so v1 could not separate upstream from lobi. That is why v2 exists.
 
+**Data files** (`--suite data`: 12 tasks plus 1 privacy task on a Python repo that reads 15 synthetic CSV/TSV files, 3 passes, Claude Haiku 4.5, 2026-10-12, $4.41). The traps are overlapping column names, a path held in a constant, a 2.9 MB CSV, a text-only CSV, dead files, and files mentioned only in docs or comments:
+
+| 3 passes, totals per pass | Plain Claude Code | Upstream GitNexus 1.6.12 | **lobi** |
+|---|---:|---:|---:|
+| **Correct answers** | 36 / 36 | 36 / 36 | 35 / 36 |
+| **Cost** | $0.43 | $0.51 | $0.47 |
+| **New tokens** | 85.8k | 82.6k | 79.3k |
+| **Wall time** | 208 s | 232 s | 215 s |
+| **Turns** | 79 | 84 | 83 |
+| **Sessions that called gitnexus** | — | **0 / 39** | **0 / 39** |
+| **Privacy task / answers that quoted a personal value** | 3/3, 0 | 3/3, 0 | 3/3, 0 |
+
+**No agent used the tools, so every MCP pass is invalid** and this table is plain Claude Code three times. On a 31-file repo, one Grep for a file name answers the question, and nothing in the tool descriptions says the graph knows about data files. The one miss was a Grep-only session that counted a doc mention as use.
+
+**What the lobi index would have answered.** Queried directly, it gets 5 of 12 right on its own. Upstream 1.6.12 indexes no CSV at all. lobi's misses:
+
+- A string in a code comment creates a false `USES` edge, which spoils two tasks.
+- Files under `fixtures/` are not indexed.
+- Neither is the 2.9 MB CSV.
+- The text-only CSV has no columns, by design.
+
+Those three fixable gaps, and a run on the masking task with a real workbook (lobi made no gitnexus calls there either), are written up in [`docs/fork/bench/`](docs/fork/bench/README.md#result-data-2026-10-12).
+
 **Limits.** One cheap model, n = 3 per task, one synthetic repository. The cost and turn gaps against plain are several standard deviations wide; the accuracy gaps and the lobi-against-upstream cost gap (about 1.3 sd) are not. Bash is available in every arm, so "read-only" is a prompt rule, backed by resetting and hashing the fixture after every session (0 of 135 sessions changed it).
 
 ### A/B evaluation: one real task

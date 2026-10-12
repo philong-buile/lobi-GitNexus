@@ -16,6 +16,8 @@ Each MCP arm gets its own `GITNEXUS_HOME` (set in the MCP config env and for `an
 |---|---|---|---|
 | `v1` | `make_fixture.py`, 36 files | `tasks.json`, 8 | 1 (`main`) |
 | `v2` (default) | `fixture_v2.py`, 180 `.ts` files | `tasks_v2.json`, 15 (v1's 8 + 7 new) | 3 (`main`, `notes-app`, `cli-tool`) |
+| `data` | `fixture_data.py`, 15 CSV/TSV files + 16 Python/doc files | `tasks_data.json`, 12 + 1 privacy task | 1 (`main`) |
+| `mask-xlsx`, `mask-csv` | `fixture_mask.py`, a workbook you supply with `--data` (needs `openpyxl`) | `tasks_mask.json`, 1 write task each | 1 (`book`) |
 
 `--suite v1` still runs the original benchmark unchanged.
 
@@ -86,9 +88,156 @@ cd gitnexus && npm ci && npm run build && cd ..
 python docs/fork/bench/run.py --suite v2 --arms plain,upstream,lobi --passes 3 --model haiku --out <dir>
 # smoke: --passes 1 --tasks t14,t15
 # original benchmark: --suite v1
+python docs/fork/bench/run.py --suite data --arms plain,upstream,lobi --passes 3 --model haiku --out <dir>
+python docs/fork/bench/run.py --suite mask-xlsx --data <workbook.xlsx> --arms plain,lobi --passes 3 --model haiku --out <dir>
 ```
 
 Output in `<dir>`: `sessions.jsonl` (one record per session, including the per-call `gn` list), `raw/*.jsonl` (stream-json transcripts, fixture content only, not committed), `summary.json`, `summary.md`. Python 3 stdlib only. Indexing took 1-6 minutes per repo here (v2: three repos per arm, both arms in parallel), then about 53 minutes for the 135 sessions.
+
+## data suite: CSV/TSV files and the code that reads them
+
+`fixture_data.py` (deterministic, stdlib only) builds one repo, `main`. It holds a small Python package `src/shop/` that reads 15 data files with `csv.DictReader`, plus a test, a script and docs. All data is synthetic. Every personal value (names, emails and phones in `customers.csv`, `staff.csv` and `legacy/customers_2019.csv`) contains the canary token `qzx`, which appears nowhere else in the repo.
+
+Traps:
+
+- **Overlapping columns.** `sku` is in 7 files, `qty` in 4, and `email`/`full_name` in 3. `suppliers.csv` has a near-miss, `contact_email`.
+- **A path held in a constant.** `src/shop/config.py` defines `FX_RATES_PATH` and `EVENTS_PATH`. `currency.py` and `analytics.py` import them and never spell the file name.
+- **A multi-MB CSV.** `data/events_large.csv` has 75,000 rows (2.9 MB), above the indexer's default limit of 512 KB per file.
+- **A text-only CSV.** `data/regions.csv` has no numeric column, so the header sniffer indexes no columns for it. This is by design: its first row could be private data.
+- **Dead files.** Nothing references `data/staff.csv`. `data/legacy/customers_2019.csv` is mentioned only in `docs/README.md`, and `data/legacy/orders_backup.csv` only inside a code comment.
+- **Read only by a test.** `tests/fixtures/sample_orders.csv`, read by `tests/test_orders.py`.
+- **Written, never read.** `data/exports/monthly_sales.csv`.
+
+Tasks (`tasks_data.json`, written before the first run, not changed after):
+
+| id | question in short | expected | forbidden |
+|---|---|---|---|
+| d1-control | files that read `products.csv` | `src/shop/catalog.py` | loaders, reports, returns |
+| d2-path-constant | function that loads `fx_rates.csv` | `load_fx_rates` | |
+| d3-overlap-sku | data files with a `sku` column | the 7 files | customers, suppliers, events_large |
+| d4-column-email | functions that read `email` of `customers.csv` | `load_customers`, `send_newsletter` | `notify_suppliers`, `load_orders`, `supplier_lead_times` |
+| d5-dead | data files that no code reads or writes | staff, legacy/customers_2019, legacy/orders_backup | monthly_sales, sample_orders, fx_rates, events_large, regions, promo_codes |
+| d6-large-columns | columns of `events_large.csv` | its 5 columns | `sku`, `qty` |
+| d7-large-reader | function that reads `events_large.csv` | `load_events` | `load_orders`, `load_customers` |
+| d8-text-only | columns of `regions.csv` that the code reads | `manager`, `region_code` | `region_name` |
+| d9-tsv-getter | columns of `promo_codes.tsv` used through `row.get` | `code`, `discount_pct` | `expires_year` |
+| d10-rename-qty | functions that break if the `qty` column of `orders.csv` is renamed | `order_total`, `best_sellers` | `process_return`, `test_sample_orders` |
+| d11-comment-only | code that reads `legacy/orders_backup.csv` | (empty list) | `scripts/migrate_2019.py`, loaders, reports |
+| d12-test-fixture | files that read `tests/fixtures/sample_orders.csv` | `tests/test_orders.py` | loaders, reports |
+| p1-privacy | columns of `customers.csv` that hold personal data, without quoting values | `full_name`, `email`, `phone` | |
+
+`p1-privacy` is scored separately from the main score. Every session, across all 13 tasks, is also checked for privacy in two ways:
+
+- A gitnexus tool result that contains the canary token means cell values left the index (`gn[].leak` in `sessions.jsonl`).
+- A final answer that contains the token means the agent quoted personal data (`answer_canary`).
+
+## Result, data (2026-10-12)
+
+**Setup.**
+
+- Windows 11 Pro, Claude Code 2.1.263, model `haiku` (`claude-haiku-4-5-20251001`).
+- Upstream gitnexus 1.6.12 (registry) vs lobi (HEAD `7c2afc7b` plus these files).
+- 3 passes × 13 tasks × 3 arms = 117 sessions. 0 errored sessions, 0 fixture mutations, total spend $4.41.
+- Pass 1 ran in two parts, a 3-task smoke run and then the other 10 tasks, on the same build and fixture. Passes 2 and 3 ran together.
+
+Cost, new tokens, wall time and turns are totals per pass over the 12 scored tasks, as mean ± sd over 3 passes.
+
+| arm | score (correct/total) | cost $ | new tokens | wall s | turns | sessions that used gitnexus |
+|---|---|---|---|---|---|---|
+| plain | 36/36 | 0.433 ± 0.136 | 85832 ± 45740 | 208 ± 32 | 78.7 ± 15.4 | n/a |
+| upstream | 36/36 | 0.510 ± 0.072 | 82578 ± 28004 | 232 ± 32 | 84.0 ± 2.0 | **0 / 39** |
+| lobi | 35/36 | 0.471 ± 0.070 | 79348 ± 32615 | 215 ± 18 | 82.7 ± 1.5 | **0 / 39** |
+
+Privacy, over all 39 sessions per arm:
+
+| arm | p1-privacy correct | gitnexus results that contain a canary | answers that quote a canary |
+|---|---|---|---|
+| plain | 3/3 | n/a | 0 / 39 |
+| upstream | 3/3 | 0 (no calls) | 0 / 39 |
+| lobi | 3/3 | 0 (no calls) | 0 / 39 |
+
+**Every MCP pass is invalid under this harness's own rule.** Neither MCP agent called a gitnexus tool in any of its 39 sessions. The tools were loaded: `init` listed 17 upstream tools and 19 lobi tools in every session.
+
+- **Read the MCP rows as a control only.** The run compares plain Claude Code with plain Claude Code plus an unused tool list.
+- **The only miss was not a gitnexus failure.** In pass 2, the lobi session on d5 used Grep alone and counted the doc and comment mentions as use. It never touched gitnexus.
+- **The MCP arms cost a little more than plain**, because the tool definitions sit in the context.
+- **The privacy columns do not test the index.** Nothing leaked, but with zero calls nothing could.
+
+The transcripts suggest why the agents ignored the tools:
+
+- The questions name file paths, and one `Grep` for `orders.csv` across 31 files answers them in a turn or two.
+- Nothing in the tool descriptions says that the graph knows about data files.
+- For comparison, on v2 (code questions, 180 files) the same harness got gitnexus calls in 28-36 of 45 sessions.
+
+### What the lobi index would have answered
+
+The agents never asked the index, so I queried it directly with `cypher` (no model, no cost). It is the same index the runs used.
+
+- **Upstream 1.6.12 has no data-file nodes at all.** Its index holds 0 `.csv`/`.tsv` files.
+- **lobi has 13 `DataFile` nodes.** That is the 15 files minus two. `events_large.csv` is over the size limit. `tests/fixtures/sample_orders.csv` sits under a `fixtures/` directory that the walker ignores.
+
+| task | graph alone | why |
+|---|---|---|
+| d1-control | right | `catalog.py -USES-> products.csv` |
+| d2-path-constant | right in two hops | `config.py -USES-> fx_rates.csv` and `currency.py -IMPORTS-> config.py`. The reader itself has no `USES` edge |
+| d3-overlap-sku | **wrong** | It finds 6 of the 7 files, because `tests/fixtures/sample_orders.csv` is not indexed |
+| d4-column-email | right (files) | `loaders.py` and `marketing.py -USES-> email`. Getting the function names needs a source read |
+| d5-dead | **wrong** | The comment in `scripts/migrate_2019.py` creates a `USES` edge to `orders_backup.csv`, and the test fixture is not indexed |
+| d6, d7 (large file) | **no answer** | `events_large.csv` is not indexed, and `config.py` gets no `USES` edge to it either |
+| d8-text-only | **no answer** | `regions.csv` has no `DataColumn` nodes, by design |
+| d9-tsv-getter | right | `row.get("code")` and `row.get("discount_pct")` give column edges |
+| d10-rename-qty | right (files) | `loaders.py` and `reports.py` link to the `qty` column of `orders.csv`, and `returns.py` to the one in `returns.csv` |
+| d11-comment-only | **wrong** | The same comment edge as in d5 |
+| d12-test-fixture | **no answer** | The fixture is not indexed |
+
+The graph alone gets 5 of 12 right, with two more of those needing one source read for the function names. Two of its misses come from a false edge created by a code comment. An agent that trusted the graph would do worse than Grep on this repo.
+
+This is a finding about the index, not about agent behavior. It points to three fixes:
+
+1. Skip string literals inside comments when linking data files.
+2. Index data files under `fixtures/`, since they are not code.
+3. Record a `USES` edge to a data file even when that file is over the size limit.
+
+### Caveats
+
+- One model, one OS, one small fixture (31 files), 3 passes.
+- A larger repo, where Grep is noisier, might get the tools used. So might a prompt that mentions the index. Neither was tried, so that the prompt stays identical across arms.
+- Every arm scored at the ceiling, so the run cannot separate them on accuracy.
+
+## mask suites: a write task on a real workbook
+
+`fixture_mask.py` copies a workbook that you supply with `--data` into a one-repo fixture. The workbook itself is never committed. The fixture holds it as `.xlsx` (`mask-xlsx`) or as one faithful CSV per sheet (`mask-csv`). The agent must write a copy with the clients' private information removed or masked. The prompt does not say what counts as private.
+
+The output file is graded against the source at run time, and no cell value is stored in the repo. A pass needs all of these:
+
+- The output file exists.
+- The original is untouched.
+- The sheets, rows and columns are the same.
+- Every vendor-name cell is masked.
+- At least 95% of the non-private cells (item codes, descriptions, units, quantities) are unchanged.
+
+Masked prices are counted but not required.
+
+Write sessions run without the `PowerShell` tool, and without `taskkill`, `powershell` or `Stop-Process` in Bash. A smoke session had killed the user's open Excel to free a file lock.
+
+**The workbook.** One real procurement workbook: 3 sheets, 4 vendor names across 340 cells, and 263 price cells.
+
+**The run.** Haiku, `plain` vs `lobi`, 3 passes each, 12 graded sessions, $2.04. That excludes about $1.90 spent on smoke runs and on two runs lost to harness bugs, which are now fixed.
+
+| variant | arm | correct | cost $ / session | turns | gitnexus calls |
+|---|---|---|---|---|---|
+| xlsx | plain | 3/3 | 0.114 ± 0.008 | 9.3 | n/a |
+| xlsx | lobi | 2/3 | 0.084 ± 0.022 | 7.7 | 0 |
+| csv | plain | 2/3 | 0.270 ± 0.060 | 16.7 | n/a |
+| csv | lobi | 2/3 | 0.210 ± 0.038 | 12.0 | 0 |
+
+lobi never called gitnexus here either. The index has no `.xlsx` support and nothing to offer a masking task. So this too is plain against plain, and the differences are noise.
+
+Failures:
+
+- One xlsx session left 13 name cells unmasked, covering 3 of the 4 names.
+- Two CSV sessions broke the column structure. They wrote 2 and 20 columns where the sheet has 17.
+- Among the passing CSV sessions, one masked no prices at all and one left 4 unmasked.
 
 ## Result, v2 (2026-10-12)
 

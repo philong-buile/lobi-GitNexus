@@ -1,0 +1,22 @@
+[
+  {
+    "id": "m1-mask-xlsx",
+    "variant": "xlsx",
+    "trap": "write task, real workbook, bot decides what is private",
+    "question": "The workbook data/book.xlsx contains private information about clients. Make a copy with that private information removed or masked so the workbook can be shared outside the company, and save it as data/book_masked.xlsx. Keep the same sheets, rows and columns, and leave everything that is not private unchanged. Do not modify data/book.xlsx.",
+    "expected": [],
+    "forbidden": [],
+    "write": true,
+    "cwd": "book"
+  },
+  {
+    "id": "m2-mask-csv",
+    "variant": "csv",
+    "trap": "write task, same workbook exported as one CSV per sheet, bot decides what is private",
+    "question": "The CSV files in data/ (book_summary.csv, book_comparison.csv, book_findings.csv) contain private information about clients. Make copies with that private information removed or masked so they can be shared outside the company, and save them under data/masked/ with the same file names. Keep the same rows and columns, and leave everything that is not private unchanged. Do not modify the original files.",
+    "expected": [],
+    "forbidden": [],
+    "write": true,
+    "cwd": "book"
+  }
+]

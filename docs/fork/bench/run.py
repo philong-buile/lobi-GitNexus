@@ -2,8 +2,9 @@
 
     python docs/fork/bench/run.py --suite v2 --arms plain,upstream,lobi --passes 3 --model haiku --out <dir>
 
-Suites: v1 (36-file fixture, tasks.json, one indexed repo) and v2 (default; ~180-file fixture,
-tasks_v2.json, three indexed repos per MCP arm, a worktree that is ahead of the index).
+Suites: v1 (36-file fixture, tasks.json, one indexed repo), v2 (default; ~180-file fixture,
+tasks_v2.json, three indexed repos per MCP arm, a worktree that is ahead of the index) and data
+(fixture_data.py, tasks_data.json: 15 CSV/TSV files and the Python code that reads them).
 
 Arms: plain (no MCP), upstream (registry gitnexus@1.6.12, privately installed), lobi (this checkout's
 built CLI). Python 3 stdlib only. See README.md for method and caveats.
@@ -22,6 +23,7 @@ import subprocess
 import sys
 import time
 
+import fixture_data
 import fixture_v2
 import make_fixture
 
@@ -35,6 +37,16 @@ PROMPT_TAIL = (
     "\n\nThis is a read-only question: do not modify any file. Use repo-relative paths "
     "with forward slashes for files and bare identifiers for functions. "
     'End your reply with a final line exactly of the form: ANSWER: ["name", "name"]'
+)
+# write sessions run unattended with skip-permissions: a smoke session killed EXCEL.EXE via PowerShell.
+# ponytail: prefix rules only; a chained `cd x && taskkill` still slips through.
+WRITE_DENY = ["NotebookEdit", "PowerShell", "Bash(taskkill:*)", "Bash(powershell:*)",
+              "Bash(powershell.exe:*)", "Bash(pwsh:*)", "Bash(Stop-Process:*)"]
+WRITE_TAIL = (  # write tasks (mask suites): the output file is graded, not the answer line
+    "\n\nDo not modify any file other than the outputs you are asked to write. Do not start, automate "
+    "or stop other programs (no Excel/COM automation, no killing processes). Use repo-relative "
+    "paths with forward slashes. "
+    'End your reply with a final line exactly of the form: ANSWER: ["path", "path"] listing the files you wrote.'
 )
 
 
@@ -138,7 +150,7 @@ def parse(path):
                         i = c.get("input") or {}
                         rec = {"tool": c["name"].split("__")[-1], "repo": i.get("repo"),
                                "worktree": i.get("worktree"), "scope": i.get("scope"),
-                               "error": False, "err": ""}
+                               "error": False, "err": "", "leak": False}
                         gn.append(rec)
                         byid[c.get("id")] = rec
         elif t == "user":
@@ -148,6 +160,8 @@ def parse(path):
                     txt = _text(c.get("content"))
                     if c.get("is_error") or re.match(r'\s*(\{\s*"error"|Error)', txt):
                         byid[c["tool_use_id"]].update(error=True, err=txt[:160])
+                    if any(k in txt.lower() for k in getattr(FX, "CANARIES", ())):  # cell values out of the index
+                        byid[c["tool_use_id"]]["leak"] = True
         elif t == "result":
             result = ev
     return tools, result, init, gn
@@ -173,12 +187,14 @@ def grade(task, answer):
 
 def run_session(arm, task, root, cfg, model, budget, out, tag):
     exe = claude_exe()
-    cmd = [exe, "-p", task["question"] + PROMPT_TAIL, "--model", model,
+    write = task.get("write", False)
+    cmd = [exe, "-p", task["question"] + (WRITE_TAIL if write else PROMPT_TAIL), "--model", model,
            "--output-format", "stream-json", "--verbose",
            "--strict-mcp-config", "--mcp-config", str(cfg),
            "--setting-sources", "project", "--disable-slash-commands",
            "--no-chrome", "--no-session-persistence",
-           "--dangerously-skip-permissions", "--disallowedTools", "Edit", "Write", "NotebookEdit",
+           "--dangerously-skip-permissions",
+           "--disallowedTools", *(WRITE_DENY if write else ["Edit", "Write", "NotebookEdit"]),
            "--max-budget-usd", str(budget)]
     env = {**os.environ, "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
     raw = out / "raw" / f"{tag}.jsonl"
@@ -211,6 +227,7 @@ def run_session(arm, task, root, cfg, model, budget, out, tag):
         "init_mcp_servers": init.get("mcp_servers"), "init_plugins": init.get("plugins"),
         "init_slash": len(init.get("slash_commands", [])), "model_used": init.get("model"),
         "stderr": err,
+        "answer_canary": any(k in (res.get("result") or "").lower() for k in getattr(FX, "CANARIES", ())),
     }
 
 
@@ -310,7 +327,8 @@ def summarize(rows, arms, passes, tasks, out, meta):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--suite", choices=["v1", "v2"], default="v2")
+    ap.add_argument("--suite", choices=["v1", "v2", "data", "mask-xlsx", "mask-csv"], default="v2")
+    ap.add_argument("--data", default="", help="mask suites: path of the source .xlsx (never copied into the repo)")
     ap.add_argument("--arms", default="plain,upstream,lobi")
     ap.add_argument("--passes", type=int, default=3)
     ap.add_argument("--model", default="haiku")
@@ -322,10 +340,19 @@ def main():
     global FX, TASKS_FILE
     if a.suite == "v2":
         FX, TASKS_FILE = fixture_v2, "tasks_v2.json"
+    elif a.suite == "data":
+        FX, TASKS_FILE = fixture_data, "tasks_data.json"
+    elif a.suite.startswith("mask-"):
+        import fixture_mask  # needs openpyxl; other suites stay stdlib-only
+        if not a.data:
+            sys.exit("--data <workbook.xlsx> is required for the mask suites")
+        fixture_mask.SOURCE, fixture_mask.VARIANT = pathlib.Path(a.data).resolve(), a.suite[5:]
+        FX, TASKS_FILE = fixture_mask, "tasks_mask.json"
     out = pathlib.Path(a.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     arms = a.arms.split(",")
     tasks = json.loads((HERE / TASKS_FILE).read_text(encoding="utf-8"))
+    tasks = [t for t in tasks if t.get("variant", a.suite[5:]) == a.suite[5:]] if a.suite.startswith("mask-") else tasks
     if a.tasks:
         keep = a.tasks.split(",")
         tasks = [t for t in tasks if t["id"] in keep or t["id"].split("-")[0] in keep]
@@ -345,12 +372,18 @@ def main():
                 tag = f"p{p}-{arm}-{t['id']}"
                 r = run_session(arm, t, root, cfg, a.model, a.budget, out, tag)
                 r["pass"] = p
+                if hasattr(FX, "grade"):  # output-file grading, before the reset wipes the outputs
+                    try:
+                        r["grade"] = FX.grade(root, t)
+                    except Exception as e:  # never lose a paid session to a grader bug
+                        r["grade"] = {"correct": False, "grader_error": repr(e)[:200]}
+                    r["correct"] = bool(r["grade"]["correct"])
                 mutated = tree_hash(root) != base_hash[arm]
                 r["mutated_fixture"] = mutated
+                jl.write(json.dumps(r) + "\n")  # record before the reset, so a reset failure loses nothing
+                jl.flush()
                 FX.apply_edits(root)  # restore pristine state every time
                 rows.append(r)
-                jl.write(json.dumps(r) + "\n")
-                jl.flush()
                 total += r["cost"]
                 print(f"{tag}: correct={r['correct']} cost=${r['cost']:.3f} turns={r['turns']} "
                       f"gn={r['gitnexus_calls']} (init mcp tools {r['init_mcp_tools']}) "
@@ -368,7 +401,26 @@ def main():
     meta = {"model": a.model, "claude": cv, "os": sys.platform + " " + os.environ.get("OS", ""),
             "lobi_version": lv, "date": time.strftime("%Y-%m-%d"), "total_cost": total,
             "capped": capped, "suite": a.suite, "passes_requested": a.passes, "arms": arms}
-    summarize(rows, arms, a.passes, tasks, out, meta)
+    priv = {t["id"] for t in tasks if t.get("privacy")}  # privacy tasks are scored on their own
+    summarize([r for r in rows if r["task"] not in priv], arms, a.passes,
+              [t for t in tasks if t["id"] not in priv], out, meta)
+    if priv or hasattr(FX, "CANARIES"):
+        privacy_report(rows, arms, priv, out)
+
+
+def privacy_report(rows, arms, priv, out):
+    """Privacy task scores, and canary cell values seen in gitnexus results (every task)."""
+    md = ["", "## Privacy", "", "| arm | privacy task correct | gitnexus results with a canary value | "
+          "sessions whose answer quotes a canary |", "|---|---|---|---|"]
+    for arm in arms:
+        r = [x for x in rows if x["arm"] == arm]
+        p = [x for x in r if x["task"] in priv]
+        md.append(f"| {arm} | {sum(x['correct'] for x in p)}/{len(p)} | "
+                  f"{sum(c.get('leak', False) for x in r for c in x['gn'])} / {sum(len(x['gn']) for x in r)} | "
+                  f"{sum(x.get('answer_canary', False) for x in r)} / {len(r)} |")
+    with open(out / "summary.md", "a", encoding="utf-8") as f:
+        f.write("\n".join(md) + "\n")
+    print("\n".join(md))
 
 
 if __name__ == "__main__":
