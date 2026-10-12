@@ -415,9 +415,9 @@ def privacy_report(rows, arms, priv, out):
     for arm in arms:
         r = [x for x in rows if x["arm"] == arm]
         p = [x for x in r if x["task"] in priv]
+        leaks = sum(c.get("leak", False) for x in r for c in x["gn"])
         md.append(f"| {arm} | {sum(x['correct'] for x in p)}/{len(p)} | "
-                  f"{'n/a' if arm == 'plain' else sum(c.get('leak', False) for x in r for c in x['gn'])} / "
-                  f"{sum(len(x['gn']) for x in r)} | "
+                  f"{'n/a' if arm == 'plain' else f'{leaks} / ' + str(sum(len(x['gn']) for x in r))} | "
                   f"{sum(x.get('answer_canary', False) for x in r)} / {len(r)} |")
     with open(out / "summary.md", "a", encoding="utf-8") as f:
         f.write("\n".join(md) + "\n")
