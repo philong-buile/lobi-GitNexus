@@ -46,6 +46,7 @@ import { chunk, mapConcurrent } from '../../lib/utils.js';
 import { pathSuffixOf } from './path-predicate.js';
 import { isCobolFile, isJclFile } from '../../core/ingestion/cobol/file-types.js';
 import { toOneBasedLine } from '../../core/ingestion/utils/line-base.js';
+import { isDataFilePath } from '../../core/ingestion/data-file-processor.js';
 import { isTestFilePath } from '../../core/ingestion/utils/test-file-path.js';
 import { isTemplateRouteCandidate } from '../../core/ingestion/utils/template-file.js';
 import { isWalCorruptionError, WAL_RECOVERY_SUGGESTION } from '../../core/lbug/lbug-config.js';
@@ -10083,6 +10084,8 @@ export class LocalBackend {
     for (const row of fileRows) {
       const filePath: string = row.filePath || '';
       if (parsed.fileFilter && !filePath.toLowerCase().includes(parsed.fileFilter)) continue;
+      // Data files are indexed by structure only; their cell values must not leave the repo.
+      if (isDataFilePath(filePath)) continue;
       filePaths.push(filePath);
     }
     // The shared scanner only checks a lexical prefix, then readFile follows

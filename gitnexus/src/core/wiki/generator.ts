@@ -64,6 +64,7 @@ import {
   formatProcesses,
 } from './prompts.js';
 
+import { isDataFilePath } from '../ingestion/data-file-processor.js';
 import { shouldIgnorePath } from '../../config/ignore-service.js';
 
 // ─── Types ────────────────────────────────────────────────────────────
@@ -1176,6 +1177,8 @@ export class WikiGenerator {
   private async readSourceFiles(filePaths: string[]): Promise<string> {
     const parts: string[] = [];
     for (const fp of filePaths) {
+      // Data files (CSV/TSV) are indexed by structure only; never feed cell values to the LLM.
+      if (isDataFilePath(fp)) continue;
       const fullPath = path.join(this.repoPath, fp);
       try {
         const content = await fs.readFile(fullPath, 'utf-8');
@@ -1197,6 +1200,7 @@ export class WikiGenerator {
   private async estimateModuleTokens(filePaths: string[]): Promise<number> {
     let total = 0;
     for (const fp of filePaths) {
+      if (isDataFilePath(fp)) continue;
       try {
         const content = await fs.readFile(path.join(this.repoPath, fp), 'utf-8');
         total += estimateTokens(content);

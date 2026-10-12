@@ -41,6 +41,7 @@ const TYPE_TO_LAYER: Record<string, number> = {
   Typedef: 2,
   Template: 2,
   TypeAlias: 2,
+  DataColumn: 2,
 
   // Layer 3: Functions / Methods
   Function: 3,
