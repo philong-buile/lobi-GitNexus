@@ -1,11 +1,16 @@
 """lobibench runner: headless Claude Code sessions, three arms, same prompt.
 
-    python docs/fork/bench/run.py --arms plain,upstream,lobi --passes 3 --model haiku --out <dir>
+    python docs/fork/bench/run.py --suite v2 --arms plain,upstream,lobi --passes 3 --model haiku --out <dir>
+
+Suites: v1 (36-file fixture, tasks.json, one indexed repo) and v2 (default; ~180-file fixture,
+tasks_v2.json, three indexed repos per MCP arm, a worktree that is ahead of the index).
 
 Arms: plain (no MCP), upstream (registry gitnexus@1.6.12, privately installed), lobi (this checkout's
 built CLI). Python 3 stdlib only. See README.md for method and caveats.
 """
 import argparse
+import collections
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -17,6 +22,7 @@ import subprocess
 import sys
 import time
 
+import fixture_v2
 import make_fixture
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -42,6 +48,8 @@ def claude_exe():
 
 
 UPSTREAM_CLI = None  # set by install_upstream()
+FX = make_fixture  # fixture module of the selected suite (set in main)
+TASKS_FILE = "tasks.json"
 
 
 def install_upstream(out):
@@ -74,36 +82,46 @@ def analyze_cmd(arm, path):
 
 
 def setup_arm(arm, out):
-    """Fresh fixture for this arm, indexed `main` for MCP arms, MCP config file."""
+    """Fresh fixture for this arm, every FX.REGISTRY repo indexed (MCP arms), MCP config file."""
     root = out / "fixtures" / arm
     if root.exists():
         shutil.rmtree(root, onexc=lambda f, p, e: (os.chmod(p, 0o700), f(p)))
-    make_fixture.make(root)  # C0, wt-agent; no edits yet so the index is of clean C0
+    FX.make(root)  # clean C0 (+ C1 on wt-ahead); no edits yet so the index is of clean state
     cfg = {"mcpServers": {}}
-    env = {}
     if arm != "plain":
         home = out / "gnhome" / arm
         home.mkdir(parents=True, exist_ok=True)
         env = {**os.environ, "GITNEXUS_HOME": str(home)}
-        t = time.time()
-        r = subprocess.run(analyze_cmd(arm, root / "main"), env=env, capture_output=True,
-                           text=True, timeout=900)
-        print(f"[{arm}] analyze exit={r.returncode} {time.time() - t:.0f}s", flush=True)
-        (out / f"analyze-{arm}.log").write_text(r.stdout + "\n" + r.stderr, encoding="utf-8")
-        if r.returncode:
-            sys.exit(f"analyze failed for {arm}; see analyze-{arm}.log")
+        for name in FX.REGISTRY:  # identical registry in every MCP arm
+            t = time.time()
+            for attempt in range(3):  # analyzer identity check is flaky on first run ("changed while ... computed")
+                r = subprocess.run(analyze_cmd(arm, root / name), env=env, capture_output=True,
+                                   text=True, timeout=1800)
+                if not r.returncode or "changed while its identity" not in r.stderr + r.stdout:
+                    break
+            print(f"[{arm}] analyze {name} exit={r.returncode} {time.time() - t:.0f}s", flush=True)
+            (out / f"analyze-{arm}-{name}.log").write_text(r.stdout + "\n" + r.stderr, encoding="utf-8")
+            if r.returncode:
+                sys.exit(f"analyze failed for {arm}/{name}; see analyze-{arm}-{name}.log")
         cmd, args = server_cmd(arm)
         cfg["mcpServers"]["gitnexus"] = {"command": cmd, "args": args,
                                          "env": {"GITNEXUS_HOME": str(home)},
                                          "alwaysLoad": True}
-    make_fixture.apply_edits(root)  # uncommitted edits AFTER indexing (the trap)
+    FX.apply_edits(root)  # uncommitted edits AFTER indexing (the trap)
     cfg_path = out / f"mcp-{arm}.json"
     cfg_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     return root, cfg_path
 
 
+def _text(c):
+    if isinstance(c, list):
+        return " ".join(x.get("text", "") for x in c if isinstance(x, dict))
+    return c if isinstance(c, str) else json.dumps(c)
+
+
 def parse(path):
-    tools, result, init = {}, None, None
+    """tools: name -> count; gn: one record per gitnexus call with its repo/worktree args and error."""
+    tools, result, init, gn, byid = {}, None, None, [], {}
     for line in open(path, encoding="utf-8", errors="replace"):
         try:
             ev = json.loads(line)
@@ -116,9 +134,23 @@ def parse(path):
             for c in ev.get("message", {}).get("content", []):
                 if isinstance(c, dict) and c.get("type") == "tool_use":
                     tools[c["name"]] = tools.get(c["name"], 0) + 1
+                    if c["name"].startswith("mcp__gitnexus"):
+                        i = c.get("input") or {}
+                        rec = {"tool": c["name"].split("__")[-1], "repo": i.get("repo"),
+                               "worktree": i.get("worktree"), "scope": i.get("scope"),
+                               "error": False, "err": ""}
+                        gn.append(rec)
+                        byid[c.get("id")] = rec
+        elif t == "user":
+            cs = ev.get("message", {}).get("content", [])
+            for c in cs if isinstance(cs, list) else []:
+                if isinstance(c, dict) and c.get("type") == "tool_result" and c.get("tool_use_id") in byid:
+                    txt = _text(c.get("content"))
+                    if c.get("is_error") or re.match(r'\s*(\{\s*"error"|Error)', txt):
+                        byid[c["tool_use_id"]].update(error=True, err=txt[:160])
         elif t == "result":
             result = ev
-    return tools, result, init
+    return tools, result, init, gn
 
 
 def extract_answer(text):
@@ -154,13 +186,13 @@ def run_session(arm, task, root, cfg, model, budget, out, tag):
     t = time.time()
     try:
         with open(raw, "wb") as f:
-            p = subprocess.run(cmd, cwd=root / "wt-agent", env=env, stdout=f,
+            p = subprocess.run(cmd, cwd=root / task.get("cwd", "wt-agent"), env=env, stdout=f,
                                stderr=subprocess.PIPE, timeout=900)
         err = p.stderr.decode("utf-8", "replace")[-500:]
     except subprocess.TimeoutExpired:
         err = "timeout"
     wall = time.time() - t
-    tools, res, init = parse(raw)
+    tools, res, init, gn = parse(raw)
     res = res or {}
     u = res.get("usage") or {}
     new_tokens = (u.get("input_tokens", 0) + u.get("output_tokens", 0)
@@ -173,7 +205,7 @@ def run_session(arm, task, root, cfg, model, budget, out, tag):
         "cache_read_tokens": u.get("cache_read_input_tokens", 0),
         "wall_s": wall, "api_ms": res.get("duration_ms"), "turns": res.get("num_turns"),
         "is_error": bool(res.get("is_error")) or not res, "stop": res.get("subtype"),
-        "tools": tools,
+        "tools": tools, "gn": gn,
         "gitnexus_calls": sum(n for k, n in tools.items() if k.startswith("mcp__gitnexus")),
         "init_mcp_tools": sum(1 for x in init.get("tools", []) if x.startswith("mcp__gitnexus")),
         "init_mcp_servers": init.get("mcp_servers"), "init_plugins": init.get("plugins"),
@@ -184,7 +216,7 @@ def run_session(arm, task, root, cfg, model, budget, out, tag):
 
 def tree_hash(root):
     h = hashlib.sha256()
-    for sub in ("main", "wt-agent"):
+    for sub in FX.CHECKOUTS:
         r = subprocess.run(["git", "diff"], cwd=root / sub, capture_output=True)
         h.update(r.stdout)
     return h.hexdigest()
@@ -197,7 +229,7 @@ def ms(xs):
 def summarize(rows, arms, passes, tasks, out, meta):
     S = {"meta": meta, "arms": {}, "invalid_passes": []}
     md = ["# lobibench summary", "",
-          f"model {meta['model']}, Claude Code {meta['claude']}, {meta['os']}, gitnexus upstream "
+          f"suite {meta['suite']}, model {meta['model']}, Claude Code {meta['claude']}, {meta['os']}, gitnexus upstream "
           f"{UPSTREAM_VERSION} vs lobi {meta['lobi_version']}, {meta['date']}", "",
           "| arm | score | cost $ | new tokens | wall s | turns | used gitnexus | invalid passes |",
           "|---|---|---|---|---|---|---|---|"]
@@ -251,6 +283,25 @@ def summarize(rows, arms, passes, tasks, out, meta):
             r = [x for x in rows if x["arm"] == arm and x["task"] == t["id"]]
             cells.append(f"{statistics.mean([x['gitnexus_calls'] for x in r]):.1f}" if r else "-")
         md.append(f"| {t['id']} | " + " | ".join(cells) + " |")
+    # what the agent actually passed to gitnexus, and whether it hit an error (MCP arms)
+    md += ["", "## gitnexus call details per task (all passes)", "",
+           "`repo`/`worktree` = argument values passed (basename; `-` = omitted), with counts. "
+           "errors = tool results that were errors.", "",
+           "| arm | task | calls | errors | tools | repo args | worktree args | first error |",
+           "|---|---|---|---|---|---|---|---|"]
+    base = lambda v: "-" if v is None else (v if v in ("", ".") else pathlib.PurePath(str(v).replace("\\", "/")).name or v)
+    cnt = lambda xs: ", ".join(f"{k}x{n}" for k, n in sorted(collections.Counter(xs).items())) or "-"
+    for arm in arms:
+        if arm == "plain":
+            continue
+        for t in tasks:
+            g = [c for x in rows if x["arm"] == arm and x["task"] == t["id"] for c in x.get("gn", [])]
+            if not g:
+                continue
+            e = next((c["err"] for c in g if c["error"]), "").replace("|", "/").replace(chr(10), " ")
+            md.append(f"| {arm} | {t['id']} | {len(g)} | {sum(c['error'] for c in g)} | "
+                      f"{cnt(c['tool'] for c in g)} | {cnt(base(c['repo']) for c in g)} | "
+                      f"{cnt(base(c['worktree']) for c in g)} | {e[:100]} |")
     md += ["", f"Total spend: ${meta['total_cost']:.2f}" + (" (STOPPED at cap)" if meta["capped"] else "")]
     (out / "summary.json").write_text(json.dumps(S, indent=2), encoding="utf-8")
     (out / "summary.md").write_text("\n".join(md) + "\n", encoding="utf-8")
@@ -259,18 +310,22 @@ def summarize(rows, arms, passes, tasks, out, meta):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--suite", choices=["v1", "v2"], default="v2")
     ap.add_argument("--arms", default="plain,upstream,lobi")
     ap.add_argument("--passes", type=int, default=3)
     ap.add_argument("--model", default="haiku")
     ap.add_argument("--out", required=True)
     ap.add_argument("--tasks", default="", help="comma-separated task ids (default: all)")
-    ap.add_argument("--cap", type=float, default=10.0, help="stop when cumulative cost exceeds this")
+    ap.add_argument("--cap", type=float, default=12.0, help="stop when cumulative cost exceeds this")
     ap.add_argument("--budget", type=float, default=1.0, help="--max-budget-usd per session")
     a = ap.parse_args()
+    global FX, TASKS_FILE
+    if a.suite == "v2":
+        FX, TASKS_FILE = fixture_v2, "tasks_v2.json"
     out = pathlib.Path(a.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     arms = a.arms.split(",")
-    tasks = json.loads((HERE / "tasks.json").read_text(encoding="utf-8"))
+    tasks = json.loads((HERE / TASKS_FILE).read_text(encoding="utf-8"))
     if a.tasks:
         keep = a.tasks.split(",")
         tasks = [t for t in tasks if t["id"] in keep or t["id"].split("-")[0] in keep]
@@ -278,7 +333,8 @@ def main():
         sys.exit(f"build first: cd gitnexus && npm ci && npm run build ({LOBI_CLI} missing)")
     if "upstream" in arms:
         install_upstream(out)
-    setups = {arm: setup_arm(arm, out) for arm in arms}
+    with concurrent.futures.ThreadPoolExecutor() as ex:  # arms have separate roots and GITNEXUS_HOME
+        setups = dict(zip(arms, ex.map(lambda arm: setup_arm(arm, out), arms)))
     base_hash = {arm: tree_hash(root) for arm, (root, _) in setups.items()}
     rows, total, capped = [], 0.0, False
     jl = open(out / "sessions.jsonl", "a", encoding="utf-8")
@@ -291,7 +347,7 @@ def main():
                 r["pass"] = p
                 mutated = tree_hash(root) != base_hash[arm]
                 r["mutated_fixture"] = mutated
-                make_fixture.apply_edits(root)  # restore pristine state every time
+                FX.apply_edits(root)  # restore pristine state every time
                 rows.append(r)
                 jl.write(json.dumps(r) + "\n")
                 jl.flush()
@@ -311,7 +367,7 @@ def main():
     lv = json.loads((REPO / "gitnexus" / "package.json").read_text(encoding="utf-8"))["version"]
     meta = {"model": a.model, "claude": cv, "os": sys.platform + " " + os.environ.get("OS", ""),
             "lobi_version": lv, "date": time.strftime("%Y-%m-%d"), "total_cost": total,
-            "capped": capped, "passes_requested": a.passes, "arms": arms}
+            "capped": capped, "suite": a.suite, "passes_requested": a.passes, "arms": arms}
     summarize(rows, arms, a.passes, tasks, out, meta)
 
 

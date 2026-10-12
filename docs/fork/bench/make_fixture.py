@@ -60,6 +60,9 @@ FILES = {
     "src/utils/ids.ts": 'let counter = 0;\n\nexport function nextId(prefix: string): string {\n  counter += 1;\n  return prefix + "-" + counter;\n}\n',
 }
 
+CHECKOUTS = ("main", "wt-agent")
+REGISTRY = ("main",)  # repos indexed in each MCP arm
+
 # (relative path, old text, new text) -- body-only edits, signatures untouched
 EDITS_MAIN = [("src/billing/money.ts",
                "  return Math.round(value * 100) / 100;",

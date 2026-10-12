@@ -1,0 +1,222 @@
+[
+  {
+    "id": "t1-control",
+    "trap": "control",
+    "question": "Which file defines and exports the constant CURRENCY? Answer with the repo-relative file path.",
+    "expected": [
+      "src/config.ts"
+    ],
+    "forbidden": [
+      "src/billing/format.ts",
+      "src/catalog/format.ts"
+    ],
+    "cwd": "wt-agent"
+  },
+  {
+    "id": "t2-dup-billing",
+    "trap": "duplicate name",
+    "question": "Which functions call the formatPrice that is defined in src/billing/format.ts? (There is another formatPrice elsewhere; only count callers of this one.) Answer with the calling function names.",
+    "expected": [
+      "renderInvoiceLine",
+      "renderReceipt"
+    ],
+    "forbidden": [
+      "renderListing",
+      "renderSearchResult"
+    ],
+    "cwd": "wt-agent"
+  },
+  {
+    "id": "t3-dup-catalog",
+    "trap": "duplicate name",
+    "question": "Which functions call the formatPrice that is defined in src/catalog/format.ts? (There is another formatPrice elsewhere; only count callers of this one.) Answer with the calling function names.",
+    "expected": [
+      "renderListing",
+      "renderSearchResult"
+    ],
+    "forbidden": [
+      "renderInvoiceLine",
+      "renderReceipt"
+    ],
+    "cwd": "wt-agent"
+  },
+  {
+    "id": "t4-chain",
+    "trap": "three-level call chain",
+    "question": "Which functions call parseAmount, directly or through any chain of other calls? Answer with every function name in that transitive caller set (not parseAmount itself).",
+    "expected": [
+      "toCents",
+      "buildInvoice",
+      "sendInvoice"
+    ],
+    "forbidden": [
+      "refundTotal",
+      "sumLines",
+      "applyTax",
+      "deliver"
+    ],
+    "cwd": "wt-agent"
+  },
+  {
+    "id": "t5-cycle",
+    "trap": "import cycle",
+    "question": "Which source files are part of an import cycle (each one imports another, and following imports leads back to itself)? Answer with repo-relative file paths. Do not include files that merely import a file in the cycle.",
+    "expected": [
+      "src/cycle/a.ts",
+      "src/cycle/b.ts",
+      "src/cycle/c.ts"
+    ],
+    "forbidden": [
+      "src/cycle/d.ts"
+    ],
+    "cwd": "wt-agent"
+  },
+  {
+    "id": "t6-worktree",
+    "trap": "worktree",
+    "question": "In this worktree (your current working directory), which functions have uncommitted changes versus HEAD, and which functions directly call those changed functions? Answer with the changed function names plus their direct callers. Only consider this worktree, not any other checkout.",
+    "expected": [
+      "applyDiscount",
+      "priceCart",
+      "quoteOrder"
+    ],
+    "forbidden": [
+      "roundCents",
+      "computeShipping"
+    ],
+    "cwd": "wt-agent"
+  },
+  {
+    "id": "t7-dead",
+    "trap": "dead code",
+    "question": "Which exported functions in src/tax/tax.ts are never called from anywhere in the repo? Answer with function names.",
+    "expected": [
+      "computeTax"
+    ],
+    "forbidden": [
+      "computeTaxRate",
+      "applyTax"
+    ],
+    "cwd": "wt-agent"
+  },
+  {
+    "id": "t8-dispatch",
+    "trap": "table dispatch",
+    "question": "Which handler functions can dispatch() in src/dispatch/dispatch.ts end up invoking at runtime? Answer with the function names.",
+    "expected": [
+      "handleRefund",
+      "handleVoid",
+      "handleCapture"
+    ],
+    "forbidden": [
+      "handleLegacy"
+    ],
+    "cwd": "wt-agent"
+  },
+  {
+    "id": "t9-deep-chain",
+    "trap": "5-level call chain, prefix-name decoy",
+    "cwd": "wt-agent",
+    "question": "Which functions call computeChecksum (the one in src/crypto/checksum.ts), directly or through any chain of other calls? Answer with every function name in that transitive caller set (not computeChecksum itself).",
+    "expected": [
+      "signPayload",
+      "buildEnvelope",
+      "queueMessage",
+      "flushOutbox",
+      "runNightlyJob"
+    ],
+    "forbidden": [
+      "verifyPayload",
+      "auditChecksums",
+      "describeChecksum",
+      "peekOutbox"
+    ]
+  },
+  {
+    "id": "t10-alias",
+    "trap": "aliased imports",
+    "cwd": "wt-agent",
+    "question": "Which functions call computeGrandTotal (defined in src/reports/total.ts)? Callers may import it under a different local name. Answer with the calling function names.",
+    "expected": [
+      "renderSummary",
+      "exportCsv",
+      "buildDashboard"
+    ],
+    "forbidden": [
+      "renderLegacy"
+    ]
+  },
+  {
+    "id": "t11-barrel",
+    "trap": "barrel re-export + same name in 3 modules",
+    "cwd": "wt-agent",
+    "question": "Which functions call the printLabel that is defined in src/shipping/label.ts? (Other modules define their own printLabel; only count callers of this one, including callers that reach it through a re-export or under an alias.) Answer with the calling function names.",
+    "expected": [
+      "dispatchParcel",
+      "reprintLabel",
+      "batchLabels"
+    ],
+    "forbidden": [
+      "stockBinTag",
+      "createReturnSlip"
+    ]
+  },
+  {
+    "id": "t12-string-mention",
+    "trap": "comments and strings that mention a name",
+    "cwd": "wt-agent",
+    "question": "Which functions actually call chargeCard (defined in src/payments/charge.ts)? Do not count comments, strings, or similarly named functions. Answer with the calling function names.",
+    "expected": [
+      "checkoutCart",
+      "renewSubscription"
+    ],
+    "forbidden": [
+      "describeBilling",
+      "scheduleRetry",
+      "explainFailure",
+      "auditNotes",
+      "deferPayment",
+      "chargeCardLater"
+    ]
+  },
+  {
+    "id": "t13-method",
+    "trap": "method call through class instances",
+    "cwd": "wt-agent",
+    "question": "Which functions call the post method of the Ledger class (src/accounting/ledger.ts)? Another class in the same file also has a post method; only count Ledger. Answer with the calling function names.",
+    "expected": [
+      "recordSale",
+      "closeMonth"
+    ],
+    "forbidden": [
+      "recordNote"
+    ]
+  },
+  {
+    "id": "t14-ahead-callers",
+    "trap": "worktree ahead of the index: symbol exists only in this HEAD",
+    "cwd": "wt-ahead",
+    "question": "In this worktree (your current working directory), which functions call applyCoupon? Answer with the calling function names. Only consider this worktree's own source, not any other checkout.",
+    "expected": [
+      "priceCart",
+      "redeemCode"
+    ],
+    "forbidden": [
+      "quoteOrder"
+    ]
+  },
+  {
+    "id": "t15-ahead-diff",
+    "trap": "worktree diff while another checkout has an uncommitted edit",
+    "cwd": "wt-ahead",
+    "question": "In this worktree (your current working directory), which functions have uncommitted changes versus HEAD, and which functions directly call those changed functions (as the code in this worktree stands)? Answer with the changed function names plus their direct callers. Only consider this worktree, not any other checkout.",
+    "expected": [
+      "computeShipping",
+      "cartTotals"
+    ],
+    "forbidden": [
+      "roundCents",
+      "summarizeCart"
+    ]
+  }
+]
