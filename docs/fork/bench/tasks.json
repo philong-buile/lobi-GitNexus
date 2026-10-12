@@ -1,0 +1,58 @@
+[
+  {
+    "id": "t1-control",
+    "trap": "control",
+    "question": "Which file defines and exports the constant CURRENCY? Answer with the repo-relative file path.",
+    "expected": ["src/config.ts"],
+    "forbidden": ["src/billing/format.ts", "src/catalog/format.ts"]
+  },
+  {
+    "id": "t2-dup-billing",
+    "trap": "duplicate name",
+    "question": "Which functions call the formatPrice that is defined in src/billing/format.ts? (There is another formatPrice elsewhere; only count callers of this one.) Answer with the calling function names.",
+    "expected": ["renderInvoiceLine", "renderReceipt"],
+    "forbidden": ["renderListing", "renderSearchResult"]
+  },
+  {
+    "id": "t3-dup-catalog",
+    "trap": "duplicate name",
+    "question": "Which functions call the formatPrice that is defined in src/catalog/format.ts? (There is another formatPrice elsewhere; only count callers of this one.) Answer with the calling function names.",
+    "expected": ["renderListing", "renderSearchResult"],
+    "forbidden": ["renderInvoiceLine", "renderReceipt"]
+  },
+  {
+    "id": "t4-chain",
+    "trap": "three-level call chain",
+    "question": "Which functions call parseAmount, directly or through any chain of other calls? Answer with every function name in that transitive caller set (not parseAmount itself).",
+    "expected": ["toCents", "buildInvoice", "sendInvoice"],
+    "forbidden": ["refundTotal", "sumLines", "applyTax", "deliver"]
+  },
+  {
+    "id": "t5-cycle",
+    "trap": "import cycle",
+    "question": "Which source files are part of an import cycle (each one imports another, and following imports leads back to itself)? Answer with repo-relative file paths. Do not include files that merely import a file in the cycle.",
+    "expected": ["src/cycle/a.ts", "src/cycle/b.ts", "src/cycle/c.ts"],
+    "forbidden": ["src/cycle/d.ts"]
+  },
+  {
+    "id": "t6-worktree",
+    "trap": "worktree",
+    "question": "In this worktree (your current working directory), which functions have uncommitted changes versus HEAD, and which functions directly call those changed functions? Answer with the changed function names plus their direct callers. Only consider this worktree, not any other checkout.",
+    "expected": ["applyDiscount", "priceCart", "quoteOrder"],
+    "forbidden": ["roundCents", "computeShipping"]
+  },
+  {
+    "id": "t7-dead",
+    "trap": "dead code",
+    "question": "Which exported functions in src/tax/tax.ts are never called from anywhere in the repo? Answer with function names.",
+    "expected": ["computeTax"],
+    "forbidden": ["computeTaxRate", "applyTax"]
+  },
+  {
+    "id": "t8-dispatch",
+    "trap": "table dispatch",
+    "question": "Which handler functions can dispatch() in src/dispatch/dispatch.ts end up invoking at runtime? Answer with the function names.",
+    "expected": ["handleRefund", "handleVoid", "handleCapture"],
+    "forbidden": ["handleLegacy"]
+  }
+]

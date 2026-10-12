@@ -10,7 +10,11 @@
 AI coding agents run in parallel, each in its own `git worktree`.<br>
 **lobi-GitNexus** gives every one of them the same code knowledge graph, and tells them exactly how fresh it is.
 
+> Agents in a fresh, unindexed worktree: **-32% cost and -55% turns** against plain Claude Code on lobibench v2,<br>
+> at 40/45 correct answers against plain's 44/45. Measured, with the tools actually called, and the misses shown below.
+
 <p>
+  <a href="#benchmarks"><img alt="lobibench v2: -32% cost, -55% turns" src="https://img.shields.io/badge/lobibench%20v2-%E2%88%9232%25%20cost%2C%20%E2%88%9255%25%20turns-FF5A36"></a>
   <a href="#why-this-fork"><img alt="Worktree aware" src="https://img.shields.io/badge/git%20worktrees-first%20class-FF5A36"></a>
   <a href="https://github.com/abhigyanpatwari/GitNexus"><img alt="Based on GitNexus 1.6.12" src="https://img.shields.io/badge/based%20on-GitNexus%201.6.12-16181D"></a>
   <a href="https://modelcontextprotocol.io/"><img alt="MCP server" src="https://img.shields.io/badge/MCP-server-16181D"></a>
@@ -21,7 +25,25 @@ AI coding agents run in parallel, each in its own `git worktree`.<br>
 <a href="#before-and-after">Before and after</a> ·
 <a href="#quick-start">Quick start</a> ·
 <a href="#how-it-works">How it works</a> ·
+<a href="#benchmarks">Benchmarks</a> ·
 <a href="docs/fork/gitnexus-reference.md">Full reference</a>
+
+---
+
+### Benchmark: 15 code questions from a fresh worktree (Claude Haiku 4.5, October 2026)
+
+| 3 passes, totals per pass | Plain Claude Code | Upstream GitNexus 1.6.12 | **lobi** |
+|---|---:|---:|---:|
+| **Correct answers** | **44 / 45** | 42 / 45 | 40 / 45 |
+| **Cost** | $0.70 | $0.55 | **$0.48** (-32%) |
+| **New tokens** | 114.7k | 78.1k | **75.4k** (-34%) |
+| **Wall time** | 515 s | 282 s | **231 s** (-55%) |
+| **Turns** | 134 | 70 | **60** (-55%) |
+| **Sessions that called gitnexus** | — | 28 / 45 | **36 / 45** |
+
+Every session starts in a linked worktree that has no index, next to a sibling checkout holding someone else's uncommitted edits, on a machine with three repositories indexed.<br>
+GitNexus cuts the work roughly in half. Plain Claude Code answered best. The accuracy gap is 4 sessions out of 45 at n = 3 per task, so read it as a warning, not a ranking.<br>
+lobi's misses are explained in [Benchmarks](#benchmarks); one of them is a real limit of the worktree fallback.
 
 </div>
 
@@ -39,6 +61,8 @@ Today, agents rarely work in one checkout. Claude Code, Codex and Cursor session
 
 This fork fixes all three. The graph tools (`query`, `context`, `impact`, `cypher`) and `detect_changes` answer from a sibling worktree's index, and they **say so**: the response names the sibling it came from and measures freshness against *your* worktree's HEAD.
 
+---
+
 ## Before and after
 
 | Agent works in… | Upstream GitNexus 1.6.12 | lobi-GitNexus |
@@ -54,6 +78,8 @@ This fork fixes all three. The graph tools (`query`, `context`, `impact`, `cyphe
 | An unrelated repository, or another submodule of the same superproject | — | **Unchanged.** No fallback across repositories |
 
 The difference that matters is the last column's honesty. An agent can trust an answer it is told is approximate. It cannot trust an answer that is wrong and labelled `current`.
+
+---
 
 ## See it
 
@@ -72,6 +98,8 @@ The difference that matters is the last column's honesty. An agent can trust an 
 ```
 
 Upstream GitNexus returns `Repository "<path>" not found` for the same call.
+
+---
 
 ## Quick start
 
@@ -100,6 +128,8 @@ cd ../feature-x && gitnexus analyze --index-only
 
 To go back to upstream: `npm unlink -g gitnexus && npm install -g gitnexus`.
 
+---
+
 ## How it works
 
 ```mermaid
@@ -120,8 +150,11 @@ flowchart TD
 - **Allowlists stay exact.** With `GITNEXUS_MCP_ALLOWED_REPOS` set, the fallback is off.
 - **Honest staleness.** The cached freshness check is keyed per worktree, and the `hint` says which sibling answered and how to get an exact graph.
 - **No change when nothing falls back.** Calls that resolve to a checkout's own index return exactly what upstream returns.
+- **Labelled, not current.** A fallback answer is the sibling's graph. Symbols and call sites your worktree's own commits add or move are not in it until you index the worktree; `commitsBehind` and `servedFrom` say so, but an agent can ignore them (lobibench caught exactly that).
 
 The change lives in [`gitnexus/src/mcp/local/local-backend.ts`](gitnexus/src/mcp/local/local-backend.ts) (`worktreeFallback`) and [`gitnexus/src/core/staleness-status.ts`](gitnexus/src/core/staleness-status.ts) (`servedFrom`).
+
+---
 
 ## Verified
 
@@ -147,7 +180,41 @@ npx vitest run test/unit/worktree-repo-fallback.test.ts
 npx tsc --noEmit
 ```
 
-## A/B evaluation
+---
+
+## Benchmarks
+
+Three measurements, from broad to narrow. Each one says what it cannot show.
+
+### lobibench: an agent benchmark with planted traps
+
+Modeled on [token-savior's tsbench](https://github.com/mibayy/token-savior#reproducing-the-tsbench-score). Real headless Claude Code sessions answer read-only questions about a generated TypeScript repository (180 files, identical on every run) and end with `ANSWER: [...]`. Each task has an `expected` list (all must appear) and a `forbidden` list (none may appear), so an answer that names the right symbol *and* a wrong one fails. Method, traps and raw tables: [`docs/fork/bench/`](docs/fork/bench/README.md).
+
+- **Three arms.** `plain` (built-in Read/Grep/Glob/Bash only), `upstream` (registry `gitnexus@1.6.12`, installed into a private prefix) and `lobi` (this fork). Same prompt, same model, each MCP arm with its own `GITNEXUS_HOME`.
+- **A realistic machine.** Each MCP arm indexes the repository's main checkout plus two unrelated repositories. Every session runs in a linked worktree with no index; the main checkout holds someone else's uncommitted edit.
+- **Traps.** A name defined in three modules, a 4-5 level call chain, an import cycle, a dead `computeTax` next to a live `computeTaxRate`, table dispatch, aliased imports, a barrel re-export, symbol names that appear only in comments and strings, and a worktree one commit ahead of the index.
+- **The tools must actually be called.** The server is `alwaysLoad`, so Claude Code does not hide its tools behind ToolSearch, and a pass in which an MCP arm never calls gitnexus is marked invalid instead of averaged. token-savior withdrew a published measurement for exactly this bug. No pass was invalid here.
+- **The developer's setup is switched off in every arm.** User settings, hooks, plugins, skills, other MCP servers, `CLAUDE.md` and auto-memory. The last two rely on environment variables that the session cannot confirm.
+- **Tasks were written before the first run** and not changed after.
+
+**v2 results** (15 tasks, 3 passes, Claude Haiku 4.5, Claude Code 2.1.263, Windows 11, 2026-10-12, $5.19): the table at the top of this page. Per task, every arm got 3/3 except:
+
+| Task | plain | upstream | lobi | What happened |
+|---|---:|---:|---:|---|
+| import cycle | 2/3 | 3/3 | 3/3 | plain dropped the `src/` prefix once |
+| dead code | 3/3 | 2/3 | 3/3 | upstream named the live `computeTaxRate` too |
+| 5-level call chain | 3/3 | 3/3 | **1/3** | lobi's agent kept `impact`'s default depth of 3; upstream's passed a larger `maxDepth`. Agent behavior, same default in both servers |
+| callers in a worktree one commit ahead | 3/3 | 1/3 | **0/3** | see below |
+
+**The real limit it found.** In the worktree that is one commit ahead, lobi diffed the right tree and found the changed function, then asked `context` for its callers. The answer came from the sibling's index, one commit old, so it listed the old caller. The response said so (`commitsBehind: 1`, `servedFrom`), and Haiku ignored it. The fallback makes diffs correct and stale graphs *labelled*; it does not make a stale graph current. If a worktree's changes move call sites, run `gitnexus analyze --index-only` in it.
+
+**What upstream did.** In 28 of 45 sessions upstream's agent passed `repo: "."` and got `Repository "." not found. Available: cli-tool, main, notes-app`, then listed repositories or guessed `main`. It always recovered: 29 of its 88 calls were errors, which cost turns rather than answers. It never called `detect_changes`, so the wrong-tree diff from the [A/B evaluation](#ab-evaluation-one-real-task) never had a chance to happen. lobi's agent mostly omitted `repo` and got answers: 10 errors in 64 calls.
+
+**v1** (8 easier tasks, one indexed repository, 3 passes, $2.64): all three arms scored 24/24, and both MCP arms cost 57-59% less than plain and took about a quarter of the turns. With one repository indexed, upstream resolves a fresh worktree to it, so v1 could not separate upstream from lobi. That is why v2 exists.
+
+**Limits.** One cheap model, n = 3 per task, one synthetic repository. The cost and turn gaps against plain are several standard deviations wide; the accuracy gaps and the lobi-against-upstream cost gap (about 1.3 sd) are not. Bash is available in every arm, so "read-only" is a prompt rule, backed by resetting and hashing the fixture after every session (0 of 135 sessions changed it).
+
+### A/B evaluation: one real task
 
 One real coding task, run twice in parallel by a headless agent: once with upstream GitNexus, once with this fork.
 
@@ -191,9 +258,9 @@ python docs/fork/ab-eval/analyze.py upstream.jsonl lobi.jsonl
 
 [`analyze.py`](docs/fork/ab-eval/analyze.py) prints cost, duration, turns, tool counts and each `detect_changes` changed-symbol list. The transcripts and prompt are not published because they contain a private codebase.
 
-## Deterministic worktree benchmark
+### Deterministic worktree benchmark
 
-The A/B run above is one anecdote. This is a repeatable, LLM-free check of the same failure: `gitnexus/test/integration/worktree-tools-benchmark.test.ts`. It builds a three-file TypeScript repo with real git, indexes only the `main` checkout with the real `analyze`, then asks the MCP read tools about two linked worktrees that have no index (`wt-agent`, detached at the same commit with an uncommitted edit to `add`; `wt-ahead`, one commit ahead with an uncommitted edit to `total`). `main` also carries someone else's uncommitted edit to `mul`. Answers are graded against what the fixture says they must be: `correct`, `error`, or `silent-wrong`.
+A repeatable, LLM-free check of the failure in the A/B run: `gitnexus/test/integration/worktree-tools-benchmark.test.ts`. It builds a three-file TypeScript repo with real git, indexes only the `main` checkout with the real `analyze`, then asks the MCP read tools about two linked worktrees that have no index (`wt-agent`, detached at the same commit with an uncommitted edit to `add`; `wt-ahead`, one commit ahead with an uncommitted edit to `total`). `main` also carries someone else's uncommitted edit to `mul`. Answers are graded against what the fixture says they must be: `correct`, `error`, or `silent-wrong`.
 
 - **lobi**: default behavior, worktree fallback on.
 - **upstream-behavior**: `callTool(..., { worktreeFallback: false })`. If that errors, retry once with `repo` set to the indexed sibling, as the agent did in the A/B run.
@@ -217,6 +284,21 @@ JSON goes to `$GITNEXUS_BENCH_OUT` (default `<tmpdir>/gitnexus-worktree-bench.js
 
 Read-only graph lookups survive the retry because the graph is the same at the same commit. `detect_changes` does not: the retry diffs the sibling's working tree, so it reports another checkout's edits with no error. Latencies are for a toy repo and mostly show per-call overhead.
 
+### Bench it yourself
+
+```bash
+# LLM-free worktree benchmark (about a minute)
+cd gitnexus && npm run build
+GITNEXUS_E2E_CLI=dist GITNEXUS_BENCH=1 npx vitest run test/integration/worktree-tools-benchmark.test.ts --reporter=verbose
+
+# lobibench agent benchmark (about 90 minutes and $5-6 on Haiku for v2)
+python docs/fork/bench/run.py --suite v2 --arms plain,upstream,lobi --passes 3 --model haiku --out <dir>
+```
+
+One trap if you rebuild lobibench elsewhere: `claude -p` inherits your user settings, hooks and plugins unless you switch them off, and anything that steers tool use then applies to the control arm too. The runner passes `--setting-sources project`, `--disable-slash-commands` and `--strict-mcp-config`; see [`docs/fork/bench/README.md`](docs/fork/bench/README.md) for the full command.
+
+---
+
 ## Everything else is GitNexus
 
 Apart from worktree handling, this fork is GitNexus 1.6.12:
@@ -227,12 +309,16 @@ Apart from worktree handling, this fork is GitNexus 1.6.12:
 
 The complete upstream guide (installation problems, CLI reference, editor setup, Docker, embeddings, tool examples) is in **[docs/fork/gitnexus-reference.md](docs/fork/gitnexus-reference.md)**.
 
+---
+
 ## Staying in sync with upstream
 
 ```bash
 git remote add upstream https://github.com/abhigyanpatwari/GitNexus.git
 git fetch upstream && git merge upstream/main
 ```
+
+---
 
 ## Credits and license
 
