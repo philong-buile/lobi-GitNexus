@@ -529,6 +529,8 @@ nodes:
   - CodeElement: Catch-all for other code elements
   - Community: Auto-detected functional area (Leiden algorithm)
   - Process: Execution flow trace
+  - DataFile: A .csv/.tsv file's structure (File -CONTAINS-> DataFile); no cell values
+  - DataColumn: A header column of a DataFile (DataFile -CONTAINS-> DataColumn)
 
 additional_node_types: "Multi-language: Struct, Enum, Macro, Typedef, Union, Namespace, Trait, Impl, TypeAlias, Const, Static, Property, Record, Delegate, Annotation, Constructor, Template, Module (use backticks in queries: \`Struct\`, \`Enum\`, etc.)"
 
@@ -540,6 +542,8 @@ node_properties:
   Property: "declaredType (STRING) — the field's type annotation (e.g., 'Address', 'City'). Used for field-access chain resolution."
   Constructor: "parameterCount (INT32), visibility (STRING), isStatic (BOOL), parameterTypes (STRING[])"
   Community: "heuristicLabel (STRING), cohesion (DOUBLE), symbolCount (INT32), keywords (STRING[]), description (STRING), enrichedBy (STRING)"
+  DataFile: "rowCount (INT64), columnCount (INT64), delimiter (STRING — 'comma' | 'semicolon' | 'tab'). File -USES-> DataFile when a string literal names its path (reason 'data-file-reference')."
+  DataColumn: "File -USES-> DataColumn when a file that references the DataFile reads the column by exact name (reason 'data-column-reference')."
   Process: "heuristicLabel (STRING), processType (STRING — 'intra_community' or 'cross_community'), stepCount (INT32), communities (STRING[]), entryPointId (STRING), terminalId (STRING)"
 
 relationships:

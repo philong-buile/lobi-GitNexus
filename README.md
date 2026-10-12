@@ -83,6 +83,12 @@ The difference that matters is the last column's honesty. An agent can trust an 
 
 ## See it
 
+<p align="center">
+  <img alt="The GitNexus knowledge graph of a private TypeScript monorepo, rendered by the GitNexus web UI with every label removed" src="docs/fork/assets/sample-graph.webp" width="760">
+</p>
+
+<p align="center"><sub>The knowledge graph of a private 518-file TypeScript monorepo (main worktree), indexed by lobi-GitNexus in about 3 minutes: 9,582 nodes, 27,633 edges, 199 clusters, 836 execution flows. Rendered by the GitNexus web UI; labels and file names are removed because the code is private.</sub></p>
+
 `gitnexus impact` run against a fresh worktree that is one commit ahead of the indexed main checkout. This is real output from this repository (61,654 symbols), with paths and the branch name generalised. The first call returned in about 3 seconds, with no `analyze` in the worktree:
 
 ```jsonc

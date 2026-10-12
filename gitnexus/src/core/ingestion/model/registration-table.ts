@@ -190,6 +190,9 @@ const LABEL_BEHAVIOR = {
   // Taint/PDG substrate (issue #2080) — a control-flow node, never a
   // symbol-resolution target. Inert: file index only, no owner scope.
   BasicBlock: 'inert',
+  // Structure of a .csv/.tsv file — never a symbol-resolution target.
+  DataFile: 'inert',
+  DataColumn: 'inert',
 } as const satisfies Record<NodeLabel, LabelBehavior> &
   // Cross-invariant 1 — every class-like label (participates in
   // qualifiedName fallback in `SymbolTable.add()`) MUST be classified as
