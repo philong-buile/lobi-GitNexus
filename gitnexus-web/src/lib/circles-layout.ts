@@ -62,6 +62,7 @@ const TYPE_TO_RING: Record<string, number> = {
   Typedef: 2,
   Template: 2,
   TypeAlias: 2,
+  DataColumn: 2,
 
   // Ring 3 – outermost: functions / methods / variables
   Function: 3,

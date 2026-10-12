@@ -181,6 +181,13 @@ describe('LocalBackend read_file and grep', () => {
     ]);
   });
 
+  it('does not grep data files even when the index lists them', async () => {
+    await fs.writeFile(path.join(root, 'people.csv'), 'name\nSECRET_CELL\n', 'utf-8');
+    vi.mocked(executeQuery).mockResolvedValue([{ filePath: 'people.csv' }]);
+    const hits = await grep({ pattern: 'SECRET_CELL' });
+    expect(hits.results).toEqual([]);
+  });
+
   it('refuses traversal, a symlink out of the repo, and a missing file', async () => {
     expect((await read({ path: '../secret.txt' })).error).toBe('Path traversal denied.');
     expect((await read({ path: '/etc/passwd' })).error).toBe('Path traversal denied.');
