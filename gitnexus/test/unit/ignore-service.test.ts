@@ -258,6 +258,35 @@ describe('shouldIgnorePath', () => {
   });
 });
 
+describe('data files under fixtures/', () => {
+  it('keeps .csv/.tsv but still ignores other fixture files and other ignored segments', () => {
+    expect(shouldIgnorePath('tests/fixtures/a.csv')).toBe(false);
+    expect(shouldIgnorePath('tests/fixtures/a.tsv')).toBe(false);
+    expect(shouldIgnorePath('tests/fixtures/a.py')).toBe(true);
+    expect(shouldIgnorePath('fixtures/x.ts')).toBe(true);
+    expect(shouldIgnorePath('node_modules/x/fixtures/a.csv')).toBe(true);
+    expect(shouldIgnorePath('__tests__/a.csv')).toBe(true);
+  });
+
+  it('childrenIgnored descends into fixtures but still prunes node_modules', async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'gn-ignore-fixtures-'));
+    try {
+      const filter = await createIgnoreFilter(tmp);
+      const mk = (rel: string) =>
+        ({ relative: () => rel, name: rel.split('/').pop() }) as unknown as Parameters<
+          typeof filter.childrenIgnored
+        >[0];
+      expect(filter.childrenIgnored(mk('fixtures'))).toBe(false);
+      expect(filter.childrenIgnored(mk('tests/fixtures'))).toBe(false);
+      expect(filter.childrenIgnored(mk('node_modules'))).toBe(true);
+      expect(filter.ignored(mk('tests/fixtures/a.py'))).toBe(true);
+      expect(filter.ignored(mk('tests/fixtures/a.csv'))).toBe(false);
+    } finally {
+      await fs.rm(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('isHardcodedIgnoredDirectory', () => {
   it('returns true for known ignored directories', () => {
     expect(isHardcodedIgnoredDirectory('node_modules')).toBe(true);

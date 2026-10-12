@@ -6,6 +6,7 @@ import path from 'path';
 import { glob } from 'glob';
 import { createIgnoreFilter } from '../../config/ignore-service.js';
 import { mapConcurrent } from '../../lib/utils.js';
+import { isDataFilePath, MAX_DATA_FILE_BYTES } from './data-file-processor.js';
 
 import { logger } from '../logger.js';
 
@@ -132,6 +133,7 @@ export const walkRepositoryPaths = async (
   let processed = 0;
   let skippedLarge = 0;
   const skippedLargePaths: string[] = [];
+  const skippedLargeDataPaths: string[] = [];
 
   for (let start = 0; start < filtered.length; start += READ_CONCURRENCY) {
     const batch = filtered.slice(start, start + READ_CONCURRENCY);
@@ -139,7 +141,15 @@ export const walkRepositoryPaths = async (
       batch.map(async (relativePath) => {
         const fullPath = path.join(repoPath, relativePath);
         const stat = await fs.stat(fullPath);
-        if (stat.size > maxFileSizeBytes) {
+        // Data files are indexed by structure only (the content is never parsed
+        // as code), so they get a higher cap than source files.
+        const isData = isDataFilePath(relativePath);
+        const cap = isData ? Math.max(maxFileSizeBytes, MAX_DATA_FILE_BYTES) : maxFileSizeBytes;
+        if (isData && stat.size > cap) {
+          skippedLargeDataPaths.push(relativePath);
+          return null;
+        }
+        if (stat.size > cap) {
           skippedLarge++;
           skippedLargePaths.push(relativePath);
           return null;
@@ -203,6 +213,13 @@ export const walkRepositoryPaths = async (
         `  Set GITNEXUS_MAX_FILE_SIZE=<KB> to include files above the default cap.`,
       );
     }
+  }
+
+  if (skippedLargeDataPaths.length > 0 && !options.quiet) {
+    skippedLargeDataPaths.sort();
+    warnLargeFileSkip(
+      `  Skipped ${skippedLargeDataPaths.length} data files (>${Math.max(maxFileSizeBytes, MAX_DATA_FILE_BYTES) / (1024 * 1024)}MB): ${skippedLargeDataPaths.slice(0, 5).join(', ')}${skippedLargeDataPaths.length > 5 ? ', ...' : ''}`,
+    );
   }
 
   return deduplicatedEntries;

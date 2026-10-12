@@ -268,6 +268,8 @@ function isPhpRouteFile(filePath: string): boolean {
 export const phpProvider = defineLanguage({
   id: SupportedLanguages.PHP,
   extensions: ['.php', '.phtml', '.php3', '.php4', '.php5', '.php8'],
+  // `#` is left out: PHP 8 attributes (`#[TestWith(...)]`) start with it.
+  commentSyntax: { line: ['//'], block: [['/*', '*/']] },
   entryPointPatterns: [
     /Controller$/,
     /^handle$/,

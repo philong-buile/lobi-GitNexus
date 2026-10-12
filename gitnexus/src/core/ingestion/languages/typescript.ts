@@ -403,6 +403,7 @@ const tsScopeOwnsReceivers = (match: CaptureMatch): ReadonlySet<string> | undefi
 export const typescriptProvider = defineLanguage({
   id: SupportedLanguages.TypeScript,
   extensions: ['.ts', '.tsx', '.mts', '.cts'],
+  commentSyntax: { line: ['//'], block: [['/*', '*/']] },
   entryPointPatterns: [/^use[A-Z]/],
   astFrameworkPatterns: [
     {
@@ -501,6 +502,7 @@ export const typescriptProvider = defineLanguage({
 export const javascriptProvider = defineLanguage({
   id: SupportedLanguages.JavaScript,
   extensions: ['.js', '.jsx', '.mjs', '.cjs'],
+  commentSyntax: { line: ['//'], block: [['/*', '*/']] },
   entryPointPatterns: [/^use[A-Z]/],
   astFrameworkPatterns: [
     {

@@ -233,11 +233,22 @@ export function shouldHarvestModuleConstants(
   return !provider.moduleConstantHeuristic || provider.moduleConstantHeuristic(content);
 }
 
+/** Comment delimiters of a language: `line` openers run to end of line; `block` pairs are [open, close]. */
+export interface CommentSyntax {
+  readonly line: readonly string[];
+  readonly block: readonly (readonly [string, string])[];
+}
+
 interface LanguageProviderConfig {
   // ── Identity ──────────────────────────────────────────────────────
   readonly id: SupportedLanguages;
   /** File extensions that map to this language (e.g., ['.ts', '.tsx']) */
   readonly extensions: readonly string[];
+
+  /** Comment delimiters, used to keep text inside comments from creating
+   *  data-file references. `line` openers run to end of line; `block` pairs are
+   *  [open, close]. Default: undefined (comments are not blanked for this language). */
+  readonly commentSyntax?: CommentSyntax;
 
   /** Entry-point function name patterns specific to this language.
    *  Merged with universal patterns at runtime for process detection scoring.

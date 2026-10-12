@@ -93,6 +93,7 @@ const GO_BUILT_INS: ReadonlySet<string> = new Set([
 export const goProvider = defineLanguage({
   id: SupportedLanguages.Go,
   extensions: ['.go'],
+  commentSyntax: { line: ['//'], block: [['/*', '*/']] },
   entryPointPatterns: [/Handler$/, /^Serve/, /^New[A-Z]/, /^Make[A-Z]/],
   astFrameworkPatterns: [
     {

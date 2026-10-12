@@ -136,6 +136,7 @@ const BUILT_INS: ReadonlySet<string> = new Set([
 export const csharpProvider = defineLanguage({
   id: SupportedLanguages.CSharp,
   extensions: ['.cs'],
+  commentSyntax: { line: ['//'], block: [['/*', '*/']] },
   entryPointPatterns: [
     /^(Get|Post|Put|Delete|Patch)/,
     /Action$/,

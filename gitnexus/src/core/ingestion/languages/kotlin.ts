@@ -132,6 +132,7 @@ const BUILT_INS: ReadonlySet<string> = new Set([
 export const kotlinProvider = defineLanguage({
   id: SupportedLanguages.Kotlin,
   extensions: ['.kt', '.kts'],
+  commentSyntax: { line: ['//'], block: [['/*', '*/']] },
   entryPointPatterns: [
     /^on(Create|Start|Resume|Pause|Stop|Destroy)$/,
     /^do[A-Z]/,

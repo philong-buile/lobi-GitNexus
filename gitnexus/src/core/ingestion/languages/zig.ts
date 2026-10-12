@@ -67,6 +67,7 @@ import {
 export const zigProvider = defineLanguage({
   id: SupportedLanguages.Zig,
   extensions: ['.zig'],
+  commentSyntax: { line: ['//'], block: [] },
   entryPointPatterns: [
     /^main$/, // standard executable entry point
     /^build$/, // build.zig entry point

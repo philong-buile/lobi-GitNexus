@@ -128,6 +128,7 @@ const BUILT_INS: ReadonlySet<string> = new Set([
 export const rustProvider = defineLanguage({
   id: SupportedLanguages.Rust,
   extensions: ['.rs'],
+  commentSyntax: { line: ['//'], block: [['/*', '*/']] },
   entryPointPatterns: [/^(get|post|put|delete)_handler$/i, /^handle_/, /^new$/, /^run$/, /^spawn/],
   astFrameworkPatterns: [
     {
