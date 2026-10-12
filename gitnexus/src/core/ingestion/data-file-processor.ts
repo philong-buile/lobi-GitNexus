@@ -266,6 +266,7 @@ export const blankComments = (content: string, syntax: CommentSyntax): string =>
   const blank = (from: number, to: number): void => {
     for (let k = from; k < to; k++) if (!isEol(out[k])) out[k] = ' ';
   };
+  const unclosed = new Set<string>();
   let i = 0;
   while (i < n) {
     const ch = content[i];
@@ -281,7 +282,10 @@ export const blankComments = (content: string, syntax: CommentSyntax): string =>
     }
     const escaped = content[i - 1] === '\\';
     const block = escaped ? undefined : syntax.block.find(([open]) => content.startsWith(open, i));
-    const close = block ? content.indexOf(block[1], i + block[0].length) : -1;
+    // A closer missing once is missing for every later opener: skip the search.
+    const close =
+      block && !unclosed.has(block[1]) ? content.indexOf(block[1], i + block[0].length) : -1;
+    if (block && close === -1) unclosed.add(block[1]);
     if (block && close !== -1) {
       const end = close + block[1].length;
       blank(i, end);
