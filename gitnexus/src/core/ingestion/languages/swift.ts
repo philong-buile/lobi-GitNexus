@@ -179,6 +179,7 @@ const BUILT_INS: ReadonlySet<string> = new Set([
 export const swiftProvider = defineLanguage({
   id: SupportedLanguages.Swift,
   extensions: ['.swift'],
+  commentSyntax: { line: ['//'], block: [['/*', '*/']] },
   preprocessSource: preprocessSwiftConditionalDirectives,
   entryPointPatterns: [
     /^viewDidLoad$/,

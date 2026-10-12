@@ -313,6 +313,7 @@ function interpretObjectiveCTypeBinding(captures: CaptureMatch): ParsedTypeBindi
 export const objectiveCProvider = defineLanguage({
   id: SupportedLanguages.ObjectiveC,
   extensions: ['.m', '.mm'],
+  commentSyntax: { line: ['//'], block: [['/*', '*/']] },
   treeSitterQueries: OBJECTIVE_C_SCOPE_QUERY,
   typeConfig: EMPTY_TYPE_CONFIG,
   exportChecker: () => true,

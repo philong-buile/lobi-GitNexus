@@ -30,6 +30,9 @@ const HEADER_SAMPLE_ROWS = 20;
 /** Longest string literal considered as a data-file path reference. */
 const MAX_PATH_LITERAL_LENGTH = 300;
 
+/** Largest data file indexed; code files are capped lower (max-file-size.ts). */
+export const MAX_DATA_FILE_BYTES = 64 * 1024 * 1024;
+
 export const isDataFilePath = (filePath: string): boolean =>
   DATA_FILE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
 
@@ -246,6 +249,58 @@ export const processDataFiles = (
   return { dataFiles, columns, columnsByPath };
 };
 
+export interface CommentSyntax {
+  readonly line: readonly string[];
+  readonly block: readonly (readonly [string, string])[];
+}
+
+/**
+ * Returns `content` with every comment character replaced by a space. Newlines
+ * are kept, so length and offsets are unchanged. String-aware: `"`/`'` strings
+ * end at an unescaped quote or a newline, backtick strings may span lines, a
+ * backslash escapes the next character, and a comment opener inside a string
+ * is not a comment.
+ */
+export const blankComments = (content: string, syntax: CommentSyntax): string => {
+  const out = content.split('');
+  const n = content.length;
+  const isEol = (c: string): boolean => c === '\n' || c === '\r';
+  const blank = (from: number, to: number): void => {
+    for (let k = from; k < to; k++) if (!isEol(out[k])) out[k] = ' ';
+  };
+  let i = 0;
+  while (i < n) {
+    const ch = content[i];
+    if (ch === '"' || ch === "'" || ch === '`') {
+      i++;
+      while (i < n && content[i] !== ch) {
+        if (content[i] === '\\') i++;
+        else if (ch !== '`' && content[i] === '\n') break;
+        i++;
+      }
+      i++; // past the closing quote (or the newline that ended the string)
+      continue;
+    }
+    const block = syntax.block.find(([open]) => content.startsWith(open, i));
+    if (block) {
+      const close = content.indexOf(block[1], i + block[0].length);
+      const end = close === -1 ? n : close + block[1].length;
+      blank(i, end);
+      i = end;
+      continue;
+    }
+    if (syntax.line.some((open) => content.startsWith(open, i))) {
+      let end = i;
+      while (end < n && !isEol(content[end])) end++;
+      blank(i, end);
+      i = end;
+      continue;
+    }
+    i++;
+  }
+  return out.join('');
+};
+
 const STRING_LITERAL_RE = /"([^"\n]{1,300})"|'([^'\n]{1,300})'|`([^`\n]{1,300})`/g;
 const DATA_EXT_IN_TEXT_RE = /\.[ct]sv\b/i;
 const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -280,11 +335,14 @@ export const resolveDataFileLiteral = (
 /**
  * Adds `File -USES-> DataFile` and `File -USES-> DataColumn` edges from the
  * given referrer files. Referrers must not include the data files themselves.
+ * When `commentSyntaxFor` returns syntax for a referrer, text inside its
+ * comments is ignored.
  */
 export const linkDataFileReferences = (
   graph: KnowledgeGraph,
   referrers: readonly DataFileInput[],
   columnsByPath: ReadonlyMap<string, readonly DataColumnRef[]>,
+  commentSyntaxFor?: (filePath: string) => CommentSyntax | undefined,
 ): { fileRefs: number; columnRefs: number } => {
   const dataPaths = [...columnsByPath.keys()];
   const dataPathSet = new Set(dataPaths);
@@ -298,10 +356,13 @@ export const linkDataFileReferences = (
     const referrerId = generateId('File', referrer.path);
     if (!graph.getNode(referrerId)) continue;
 
+    const syntax = commentSyntaxFor?.(referrer.path);
+    const text = syntax ? blankComments(referrer.content, syntax) : referrer.content;
+
     const referenced = new Map<string, boolean>(); // data path -> exact
     STRING_LITERAL_RE.lastIndex = 0;
     let m: RegExpExecArray | null;
-    while ((m = STRING_LITERAL_RE.exec(referrer.content)) !== null) {
+    while ((m = STRING_LITERAL_RE.exec(text)) !== null) {
       const literal = m[1] ?? m[2] ?? m[3];
       const hit = resolveDataFileLiteral(literal, referrer.path, dataPaths, dataPathSet);
       if (hit) referenced.set(hit.path, (referenced.get(hit.path) ?? false) || hit.exact);
@@ -330,7 +391,7 @@ export const linkDataFileReferences = (
     for (const [name, col] of columnByName) {
       if (!col || name.length < 2) continue;
       const access = new RegExp(`(?:\\[|\\.get\\(|\\bcol\\()\\s*(["'])${escapeRegExp(name)}\\1`);
-      if (!access.test(referrer.content)) continue;
+      if (!access.test(text)) continue;
       graph.addRelationship({
         id: generateId('USES', `${referrerId}->${col.id}`),
         type: 'USES',

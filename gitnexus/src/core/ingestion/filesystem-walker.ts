@@ -6,6 +6,7 @@ import path from 'path';
 import { glob } from 'glob';
 import { createIgnoreFilter } from '../../config/ignore-service.js';
 import { mapConcurrent } from '../../lib/utils.js';
+import { isDataFilePath, MAX_DATA_FILE_BYTES } from './data-file-processor.js';
 
 import { logger } from '../logger.js';
 
@@ -139,7 +140,12 @@ export const walkRepositoryPaths = async (
       batch.map(async (relativePath) => {
         const fullPath = path.join(repoPath, relativePath);
         const stat = await fs.stat(fullPath);
-        if (stat.size > maxFileSizeBytes) {
+        // Data files are indexed by structure only (the content is never parsed
+        // as code), so they get a higher cap than source files.
+        const cap = isDataFilePath(relativePath)
+          ? Math.max(maxFileSizeBytes, MAX_DATA_FILE_BYTES)
+          : maxFileSizeBytes;
+        if (stat.size > cap) {
           skippedLarge++;
           skippedLargePaths.push(relativePath);
           return null;

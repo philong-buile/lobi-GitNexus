@@ -13,7 +13,9 @@ import type { PipelinePhase, PipelineContext, PhaseResult } from './types.js';
 import { getPhaseOutput } from './types.js';
 import type { StructureOutput } from './structure.js';
 import { readFileContents } from '../filesystem-walker.js';
+import { getProviderForFile } from '../languages/index.js';
 import {
+  type DataColumnRef,
   isDataFilePath,
   linkDataFileReferences,
   processDataFiles,
@@ -23,6 +25,9 @@ import { logger } from '../../logger.js';
 
 /** Referrer files read per batch, to bound memory on large repos. */
 const REFERRER_BATCH = 500;
+
+/** Data file bytes held in memory at once. */
+const DATA_BATCH_BYTES = 64 * 1024 * 1024;
 
 export interface DataFilesOutput {
   dataFiles: number;
@@ -40,16 +45,35 @@ export const dataFilesPhase: PipelinePhase<DataFilesOutput> = {
     deps: ReadonlyMap<string, PhaseResult<unknown>>,
   ): Promise<DataFilesOutput> {
     const { scannedFiles } = getPhaseOutput<StructureOutput>(deps, 'structure');
-    const dataPaths = scannedFiles.map((f) => f.path).filter(isDataFilePath);
-    if (dataPaths.length === 0) return { dataFiles: 0, columns: 0, fileRefs: 0, columnRefs: 0 };
+    const dataEntries = scannedFiles.filter((f) => isDataFilePath(f.path));
+    if (dataEntries.length === 0) return { dataFiles: 0, columns: 0, fileRefs: 0, columnRefs: 0 };
 
-    const dataContents = await readFileContents(ctx.repoPath, dataPaths);
-    const { dataFiles, columns, columnsByPath } = processDataFiles(
-      ctx.graph,
-      dataPaths
-        .filter((p) => dataContents.has(p))
-        .map((p) => ({ path: p, content: dataContents.get(p)! })),
-    );
+    // Batches are bounded by total bytes (a lone oversized file gets its own),
+    // so many large CSVs are never in memory together.
+    const columnsByPath = new Map<string, DataColumnRef[]>();
+    let dataFiles = 0;
+    let columns = 0;
+    for (let i = 0; i < dataEntries.length; ) {
+      const batch = [dataEntries[i++]];
+      let bytes = batch[0].size;
+      while (i < dataEntries.length && bytes + dataEntries[i].size <= DATA_BATCH_BYTES) {
+        bytes += dataEntries[i].size;
+        batch.push(dataEntries[i++]);
+      }
+      const contents = await readFileContents(
+        ctx.repoPath,
+        batch.map((f) => f.path),
+      );
+      const processed = processDataFiles(
+        ctx.graph,
+        batch
+          .filter((f) => contents.has(f.path))
+          .map((f) => ({ path: f.path, content: contents.get(f.path)! })),
+      );
+      for (const [p, refs] of processed.columnsByPath) columnsByPath.set(p, refs);
+      dataFiles += processed.dataFiles;
+      columns += processed.columns;
+    }
 
     // ponytail: re-reads every non-data file once per analyze when the repo has
     // data files; share the parse phase's content if this shows up in profiles.
@@ -63,6 +87,7 @@ export const dataFilesPhase: PipelinePhase<DataFilesOutput> = {
         ctx.graph,
         batch.filter((p) => contents.has(p)).map((p) => ({ path: p, content: contents.get(p)! })),
         columnsByPath,
+        (p) => getProviderForFile(p)?.commentSyntax,
       );
       fileRefs += linked.fileRefs;
       columnRefs += linked.columnRefs;

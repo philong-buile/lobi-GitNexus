@@ -84,6 +84,7 @@ const dartEnclosingFunctionFinder = (
 export const dartProvider = defineLanguage({
   id: SupportedLanguages.Dart,
   extensions: ['.dart'],
+  commentSyntax: { line: ['//'], block: [['/*', '*/']] },
   entryPointPatterns: [
     /^main$/,
     /^build$/,

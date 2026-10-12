@@ -180,6 +180,7 @@ const rubyResolveContainerTypeOwner = (
 export const rubyProvider = defineLanguage({
   id: SupportedLanguages.Ruby,
   extensions: ['.rb', '.rake', '.gemspec'],
+  commentSyntax: { line: ['#'], block: [] },
   entryPointPatterns: [/^call$/, /^perform$/, /^execute$/],
   astFrameworkPatterns: [
     {

@@ -172,6 +172,7 @@ const sharedPrefixLength = (left: readonly string[], right: readonly string[]): 
 export const javaProvider = defineLanguage({
   id: SupportedLanguages.Java,
   extensions: ['.java'],
+  commentSyntax: { line: ['//'], block: [['/*', '*/']] },
   entryPointPatterns: [/^do[A-Z]/, /^create[A-Z]/, /^build[A-Z]/, /Service$/],
   astFrameworkPatterns: [
     {

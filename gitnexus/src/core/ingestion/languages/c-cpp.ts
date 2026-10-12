@@ -354,6 +354,7 @@ const cppLabelOverride: NonNullable<LanguageProvider['labelOverride']> = (
 export const cProvider = defineLanguage({
   id: SupportedLanguages.C,
   extensions: ['.c'],
+  commentSyntax: { line: ['//'], block: [['/*', '*/']] },
   entryPointPatterns: [
     /^main$/,
     /^init_/,
@@ -440,6 +441,7 @@ export const cppProvider = defineLanguage({
   // CUDA files route through tree-sitter-cpp as a conservative C++-subset parser:
   // definitions still extract, but CUDA launch syntax (`<<< >>>`) is not modeled as calls.
   extensions: ['.cpp', '.cc', '.cxx', '.h', '.hpp', '.hxx', '.hh', '.cu', '.cuh'],
+  commentSyntax: { line: ['//'], block: [['/*', '*/']] },
   entryPointPatterns: [
     /^main$/,
     /^init_/,

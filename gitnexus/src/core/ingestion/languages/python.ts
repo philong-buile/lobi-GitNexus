@@ -110,6 +110,7 @@ function normalizePythonStringLiteral(text: string): string | undefined {
 export const pythonProvider = defineLanguage({
   id: SupportedLanguages.Python,
   extensions: ['.py', '.ipynb'],
+  commentSyntax: { line: ['#'], block: [] },
   entryPointPatterns: [/^app$/, /^(get|post|put|delete|patch)_/i, /^api_/, /^view_/],
   astFrameworkPatterns: [
     {

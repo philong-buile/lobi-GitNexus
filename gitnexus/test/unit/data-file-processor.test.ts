@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  blankComments,
   isDataFilePath,
   linkDataFileReferences,
   looksLikeHeader,
@@ -251,5 +252,83 @@ describe('linkDataFileReferences', () => {
     const content = 'a = "data/users.csv"\nb = "data/orders.csv"\nrow["status"]\n';
     const result = linkDataFileReferences(graph, [{ path: 'src/load.py', content }], columnsByPath);
     expect(result).toEqual({ fileRefs: 2, columnRefs: 0 });
+  });
+});
+
+describe('blankComments', () => {
+  const slash = { line: ['//'], block: [['/*', '*/'] as const] };
+  const hash = { line: ['#'], block: [] };
+
+  it('blanks comments, keeping length and newlines', () => {
+    const src = 'a = 1 // note\nb = 2 /* x\ny */ c\n';
+    const out = blankComments(src, slash);
+    expect(out).toHaveLength(src.length);
+    expect(out).toBe('a = 1        \nb = 2     \n     c\n');
+  });
+
+  it('keeps comment openers inside strings', () => {
+    expect(blankComments('u = "http://x" // c', slash)).toBe('u = "http://x"     ');
+    expect(blankComments('c = "#fff"  # c', hash)).toBe('c = "#fff"     ');
+    expect(blankComments("c = '#fff'", hash)).toBe("c = '#fff'");
+  });
+
+  it('honours escaped quotes', () => {
+    const src = 'a = "q\\" // still string" // real';
+    expect(blankComments(src, slash)).toBe('a = "q\\" // still string"        ');
+  });
+
+  it('ends a quote string at a newline but lets a backtick string span lines', () => {
+    expect(blankComments('a = "open\n// c', slash)).toBe('a = "open\n    ');
+    expect(blankComments('a = `x\n// not\n` // c', slash)).toBe('a = `x\n// not\n`     ');
+  });
+
+  it('blanks an unterminated block comment to the end', () => {
+    expect(blankComments('a /* x\ny', slash)).toBe('a     \n ');
+  });
+});
+
+describe('linkDataFileReferences with comment syntax', () => {
+  const setup = () => {
+    const graph = graphWithFiles('data/users.csv', 'src/a.py', 'src/a.ts');
+    const { columnsByPath } = processDataFiles(graph, [
+      { path: 'data/users.csv', content: 'id,email\n1,a\n' },
+    ]);
+    return { graph, columnsByPath };
+  };
+  const syntaxFor = (p: string) =>
+    p.endsWith('.py')
+      ? { line: ['#'], block: [] }
+      : { line: ['//'], block: [['/*', '*/'] as const] };
+  const link = (path: string, content: string, withSyntax = true) => {
+    const { graph, columnsByPath } = setup();
+    return linkDataFileReferences(
+      graph,
+      [{ path, content }],
+      columnsByPath,
+      withSyntax ? syntaxFor : undefined,
+    );
+  };
+
+  it('adds no edge for a path inside a # comment', () => {
+    expect(link('src/a.py', '# old: read_csv("data/users.csv")\n').fileRefs).toBe(0);
+  });
+
+  it('adds no edge for a path inside // or block comments', () => {
+    expect(link('src/a.ts', '// load("data/users.csv")\n').fileRefs).toBe(0);
+    expect(link('src/a.ts', '/* a\n load("data/users.csv")\n*/\n').fileRefs).toBe(0);
+  });
+
+  it('still links a real literal after a string holding a comment opener', () => {
+    expect(link('src/a.ts', 'f("http://x", "data/users.csv") // tail\n').fileRefs).toBe(1);
+  });
+
+  it('adds no column edge for a column access inside a comment', () => {
+    const commented = 'load("data/users.csv")\n# row["email"]\n';
+    expect(link('src/a.py', commented)).toEqual({ fileRefs: 1, columnRefs: 0 });
+    expect(link('src/a.py', 'load("data/users.csv")\nrow["email"]\n').columnRefs).toBe(1);
+  });
+
+  it('is unchanged when commentSyntaxFor is omitted', () => {
+    expect(link('src/a.py', '# old: read_csv("data/users.csv")\n', false).fileRefs).toBe(1);
   });
 });

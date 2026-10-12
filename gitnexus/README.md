@@ -814,7 +814,7 @@ echo "build/" >> .git/info/exclude                          # this repo only, un
 
 ### Large files are being skipped
 
-By default the walker skips files larger than **512 KB** (see log line `Skipped N large files (>512KB)`). Raise the threshold via either the CLI flag or the environment variable — both accept a value in **KB**:
+By default the walker skips files larger than **512 KB** (see log line `Skipped N large files (>512KB)`). `.csv`/`.tsv` data files are exempt up to **64 MB**: they are indexed by structure only, never parsed. Raise the threshold via either the CLI flag or the environment variable — both accept a value in **KB**:
 
 ```bash
 # CLI flag (takes precedence over the env var)

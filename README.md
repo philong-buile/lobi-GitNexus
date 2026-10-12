@@ -239,7 +239,7 @@ Modeled on [token-savior's tsbench](https://github.com/mibayy/token-savior#repro
 - Neither is the 2.9 MB CSV.
 - The text-only CSV has no columns, by design.
 
-Those three fixable gaps, and a run on the masking task with a real workbook (lobi made no gitnexus calls there either), are written up in [`docs/fork/bench/`](docs/fork/bench/README.md#result-data-2026-10-12).
+The first three are now fixed: comments are skipped, data files under `fixtures/` are indexed, and data files get a 64 MB cap. With those fixes the graph answers 11 of 12 on its own. The agents were not rerun. The details, and a run on the masking task with a real workbook (lobi made no gitnexus calls there either), are written up in [`docs/fork/bench/`](docs/fork/bench/README.md#result-data-2026-10-12).
 
 **Limits.** One cheap model, n = 3 per task, one synthetic repository. The cost and turn gaps against plain are several standard deviations wide; the accuracy gaps and the lobi-against-upstream cost gap (about 1.3 sd) are not. Bash is available in every arm, so "read-only" is a prompt rule, backed by resetting and hashing the fixture after every session (0 of 135 sessions changed it).
 

@@ -239,6 +239,14 @@ interface LanguageProviderConfig {
   /** File extensions that map to this language (e.g., ['.ts', '.tsx']) */
   readonly extensions: readonly string[];
 
+  /** Comment delimiters, used to keep text inside comments from creating
+   *  data-file references. `line` openers run to end of line; `block` pairs are
+   *  [open, close]. Default: undefined (comments are not blanked for this language). */
+  readonly commentSyntax?: {
+    readonly line: readonly string[];
+    readonly block: readonly (readonly [string, string])[];
+  };
+
   /** Entry-point function name patterns specific to this language.
    *  Merged with universal patterns at runtime for process detection scoring.
    *  Default: [] (only universal patterns apply). */

@@ -198,6 +198,22 @@ This is a finding about the index, not about agent behavior. It points to three 
 2. Index data files under `fixtures/`, since they are not code.
 3. Record a `USES` edge to a data file even when that file is over the size limit.
 
+**After the fixes** (branch `fix/data-file-index-gaps`, same fixture, cypher only):
+
+- **Comments.** Text inside comments no longer creates edges. Each language provider declares its comment syntax.
+- **Fixtures.** `.csv`/`.tsv` files under `fixtures/` are indexed. Code files there are still skipped.
+- **Size limit.** Data files are capped at 64 MB, not at the 512 KB code limit.
+
+The index now has all 15 `DataFile` nodes. `events_large.csv` has its 75,000 rows and 5 columns, and `config.py -USES-> events_large.csv` appears. `tests/test_orders.py` links to `sample_orders.csv` and its `qty` column. `scripts/migrate_2019.py` has no edge.
+
+The graph alone now answers 11 of 12 tasks:
+
+- d2 and d7 need one `IMPORTS` hop.
+- d4 and d10 need a source read for the function names.
+- d8 still has no answer, by design (text-only CSV).
+
+No agent session was rerun.
+
 ### Caveats
 
 - One model, one OS, one small fixture (31 files), 3 passes.

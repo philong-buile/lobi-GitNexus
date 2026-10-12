@@ -12,6 +12,7 @@ import fs from 'fs/promises';
 import nodePath from 'path';
 import type { Path } from 'path-scurry';
 import { readRepoControlFile } from './repo-control-file.js';
+import { isDataFilePath } from '../core/ingestion/data-file-processor.js';
 import { logger } from '../core/logger.js';
 import { getCoreExcludesFilePath, getGitInfoExcludePath } from '../storage/git.js';
 
@@ -316,6 +317,13 @@ const IGNORED_FILES = new Set([
   '.env.example',
 ]);
 
+// Hardcoded-ignored directories whose data files (.csv/.tsv) are still indexed:
+// fixture code is noise, but tests read the fixture data. Every other rule
+// (other segments, extensions, filenames) still applies to such a path.
+// ponytail: the walker now enumerates these directories (it used to prune them
+// whole), which costs walk time on fixture-heavy repos.
+const DATA_FILE_DIRECTORIES = new Set(['fixtures']);
+
 // The hardcoded DEFAULT_IGNORE_LIST is the "safety net" default: directories
 // that are almost never source code (node_modules, .git, dist, __tests__,
 // etc.). Users who legitimately need to index one of these can negate the
@@ -347,6 +355,7 @@ export const shouldIgnorePath = (filePath: string): boolean => {
   // Check if any path segment is in the hardcoded ignore list.
   for (const part of parts) {
     if (DEFAULT_IGNORE_LIST.has(part)) {
+      if (DATA_FILE_DIRECTORIES.has(part) && isDataFilePath(fileName)) continue;
       return true;
     }
   }
@@ -757,6 +766,10 @@ export const createIgnoreFilter = async (repoPath: string, options?: IgnoreOptio
       return shouldIgnorePath(rel);
     },
     childrenIgnored(p: Path): boolean {
+      // Descend into DATA_FILE_DIRECTORIES; `ignored` drops their non-data files.
+      const hardcodedPruned = (rel: string): boolean =>
+        !DATA_FILE_DIRECTORIES.has(nodePath.basename(rel)) &&
+        isHardcodedIgnoredDirectoryAtPath(repoPath, nodePath.join(repoPath, rel));
       // Note: dot-directories (.git, .vscode, etc.) are primarily excluded by
       // glob's `dot: false` option in filesystem-walker.ts. The hardcoded
       // list check below is defense-in-depth — do not remove `dot: false`
@@ -775,7 +788,7 @@ export const createIgnoreFilter = async (repoPath: string, options?: IgnoreOptio
         if (nested === true) return true;
         if (nested === false) {
           if (ig && hasExplicitUnignore(ig, rel) && !ig.ignores(rel + '/')) return false;
-          return isHardcodedIgnoredDirectoryAtPath(repoPath, nodePath.join(repoPath, rel));
+          return hardcodedPruned(rel);
         }
       }
       // User's .gitnexusignore negation takes precedence (#771) — if the
@@ -786,7 +799,7 @@ export const createIgnoreFilter = async (repoPath: string, options?: IgnoreOptio
       // blocks descent into `__tests__/generated/`.
       if (ig && rel && hasExplicitUnignore(ig, rel) && !ig.ignores(rel + '/')) return false;
       // Hardcoded and path-aware rules prune whole trees before glob walks them.
-      if (rel && isHardcodedIgnoredDirectoryAtPath(repoPath, nodePath.join(repoPath, rel))) {
+      if (rel && hardcodedPruned(rel)) {
         return true;
       }
       // Check against .gitignore / .gitnexusignore patterns.
