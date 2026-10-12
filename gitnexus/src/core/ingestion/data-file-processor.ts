@@ -18,6 +18,7 @@ import path from 'node:path';
 import type { GraphNode } from 'gitnexus-shared';
 import { generateId } from '../../lib/utils.js';
 import type { KnowledgeGraph } from '../graph/types.js';
+import type { CommentSyntax } from './language-provider.js';
 
 const DATA_FILE_EXTENSIONS = new Set(['.csv', '.tsv']);
 
@@ -249,17 +250,14 @@ export const processDataFiles = (
   return { dataFiles, columns, columnsByPath };
 };
 
-export interface CommentSyntax {
-  readonly line: readonly string[];
-  readonly block: readonly (readonly [string, string])[];
-}
-
 /**
  * Returns `content` with every comment character replaced by a space. Newlines
  * are kept, so length and offsets are unchanged. String-aware: `"`/`'` strings
  * end at an unescaped quote or a newline, backtick strings may span lines, a
  * backslash escapes the next character, and a comment opener inside a string
- * is not a comment.
+ * is not a comment. An opener right after a backslash (`/\/*$/`, `/\/\//` in a
+ * regex literal) is not one either, and an unclosed block opener is ignored,
+ * so a misread opener cannot blank the rest of the file.
  */
 export const blankComments = (content: string, syntax: CommentSyntax): string => {
   const out = content.split('');
@@ -281,15 +279,16 @@ export const blankComments = (content: string, syntax: CommentSyntax): string =>
       i++; // past the closing quote (or the newline that ended the string)
       continue;
     }
-    const block = syntax.block.find(([open]) => content.startsWith(open, i));
-    if (block) {
-      const close = content.indexOf(block[1], i + block[0].length);
-      const end = close === -1 ? n : close + block[1].length;
+    const escaped = content[i - 1] === '\\';
+    const block = escaped ? undefined : syntax.block.find(([open]) => content.startsWith(open, i));
+    const close = block ? content.indexOf(block[1], i + block[0].length) : -1;
+    if (block && close !== -1) {
+      const end = close + block[1].length;
       blank(i, end);
       i = end;
       continue;
     }
-    if (syntax.line.some((open) => content.startsWith(open, i))) {
+    if (!escaped && syntax.line.some((open) => content.startsWith(open, i))) {
       let end = i;
       while (end < n && !isEol(content[end])) end++;
       blank(i, end);

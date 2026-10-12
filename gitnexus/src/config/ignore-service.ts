@@ -735,6 +735,21 @@ export const createIgnoreFilter = async (repoPath: string, options?: IgnoreOptio
       // native separators on Windows when called through glob.
       const rel = p.relative().replace(/\\/g, '/');
       if (!rel) return false;
+      // A non-data file below a DATA_FILE_DIRECTORIES directory is reached only
+      // because childrenIgnored no longer prunes that directory. Keep it out
+      // exactly as the pruning did, so a file-level negation elsewhere cannot
+      // let fixture code in; an explicit unignore of the directory still does.
+      if (!isDataFilePath(rel)) {
+        const parts = rel.split('/');
+        for (let k = 0; k < parts.length - 1; k++) {
+          if (
+            DATA_FILE_DIRECTORIES.has(parts[k]) &&
+            dirPruned(parts.slice(0, k + 1).join('/'), false)
+          ) {
+            return true;
+          }
+        }
+      }
       // Nested .gitignore files below the root (#2675). .gitnexusignore
       // comes first, then the deepest nested .gitignore, which outranks the
       // root .gitignore as in git. The nested matcher preserves independent
@@ -766,52 +781,56 @@ export const createIgnoreFilter = async (repoPath: string, options?: IgnoreOptio
       return shouldIgnorePath(rel);
     },
     childrenIgnored(p: Path): boolean {
-      // Descend into DATA_FILE_DIRECTORIES; `ignored` drops their non-data files.
-      const hardcodedPruned = (rel: string): boolean =>
-        !DATA_FILE_DIRECTORIES.has(nodePath.basename(rel)) &&
-        isHardcodedIgnoredDirectoryAtPath(repoPath, nodePath.join(repoPath, rel));
-      // Note: dot-directories (.git, .vscode, etc.) are primarily excluded by
-      // glob's `dot: false` option in filesystem-walker.ts. The hardcoded
-      // list check below is defense-in-depth — do not remove `dot: false`
-      // assuming this covers it.
-      const rel = p.relative().replace(/\\/g, '/');
-      // Nested .gitignore files below the root (#2675), same precedence as in
-      // `ignored` above.
-      if (nestedIgnores && rel) {
-        if (nexusIgnore) {
-          if (hasExplicitUnignore(nexusIgnore, rel) && !ig?.ignores(rel + '/')) {
-            return false;
-          }
-          if (nexusIgnore.ignores(rel + '/')) return true;
-        }
-        const nested = nestedIgnores(rel, true);
-        if (nested === true) return true;
-        if (nested === false) {
-          if (ig && hasExplicitUnignore(ig, rel) && !ig.ignores(rel + '/')) return false;
-          return hardcodedPruned(rel);
-        }
-      }
-      // User's .gitnexusignore negation takes precedence (#771) — if the
-      // user explicitly unignored this directory or any ancestor via a
-      // !pattern rule, allow descent even if the directory name is in
-      // DEFAULT_IGNORE_LIST. The `!ig.ignores(rel + '/')` guard keeps
-      // last-match-wins: `!__tests__/` + `__tests__/generated/` still
-      // blocks descent into `__tests__/generated/`.
-      if (ig && rel && hasExplicitUnignore(ig, rel) && !ig.ignores(rel + '/')) return false;
-      // Hardcoded and path-aware rules prune whole trees before glob walks them.
-      if (rel && hardcodedPruned(rel)) {
-        return true;
-      }
-      // Check against .gitignore / .gitnexusignore patterns.
-      // Since childrenIgnored is only called for directories, always test with
-      // a trailing slash. This ensures directory-only negation patterns (e.g.
-      // `!iOS/`) are applied correctly — without the slash, `ig.ignores('iOS')`
-      // treats the path as a file and misses the negation.
-      // Bare-name patterns (e.g. `local`) still match `local/` per gitignore spec:
-      // the `ignore` package normalizes `dir` and `dir/` to match directories.
-      // See: https://github.com/kaelzhang/node-ignore#2-filenames-and-dirnames
-      if (ig && rel && ig.ignores(rel + '/')) return true;
-      return false;
+      return dirPruned(p.relative().replace(/\\/g, '/'), true);
     },
   };
+
+  function dirPruned(rel: string, exemptDataDirs: boolean): boolean {
+    // With `exemptDataDirs`, descend into DATA_FILE_DIRECTORIES; `ignored`
+    // then keeps their non-data files out.
+    const hardcodedPruned = (r: string): boolean =>
+      !(exemptDataDirs && DATA_FILE_DIRECTORIES.has(nodePath.basename(r))) &&
+      isHardcodedIgnoredDirectoryAtPath(repoPath, nodePath.join(repoPath, r));
+    // Note: dot-directories (.git, .vscode, etc.) are primarily excluded by
+    // glob's `dot: false` option in filesystem-walker.ts. The hardcoded
+    // list check below is defense-in-depth — do not remove `dot: false`
+    // assuming this covers it.
+    // Nested .gitignore files below the root (#2675), same precedence as in
+    // `ignored` above.
+    if (nestedIgnores && rel) {
+      if (nexusIgnore) {
+        if (hasExplicitUnignore(nexusIgnore, rel) && !ig?.ignores(rel + '/')) {
+          return false;
+        }
+        if (nexusIgnore.ignores(rel + '/')) return true;
+      }
+      const nested = nestedIgnores(rel, true);
+      if (nested === true) return true;
+      if (nested === false) {
+        if (ig && hasExplicitUnignore(ig, rel) && !ig.ignores(rel + '/')) return false;
+        return hardcodedPruned(rel);
+      }
+    }
+    // User's .gitnexusignore negation takes precedence (#771) — if the
+    // user explicitly unignored this directory or any ancestor via a
+    // !pattern rule, allow descent even if the directory name is in
+    // DEFAULT_IGNORE_LIST. The `!ig.ignores(rel + '/')` guard keeps
+    // last-match-wins: `!__tests__/` + `__tests__/generated/` still
+    // blocks descent into `__tests__/generated/`.
+    if (ig && rel && hasExplicitUnignore(ig, rel) && !ig.ignores(rel + '/')) return false;
+    // Hardcoded and path-aware rules prune whole trees before glob walks them.
+    if (rel && hardcodedPruned(rel)) {
+      return true;
+    }
+    // Check against .gitignore / .gitnexusignore patterns.
+    // Since childrenIgnored is only called for directories, always test with
+    // a trailing slash. This ensures directory-only negation patterns (e.g.
+    // `!iOS/`) are applied correctly — without the slash, `ig.ignores('iOS')`
+    // treats the path as a file and misses the negation.
+    // Bare-name patterns (e.g. `local`) still match `local/` per gitignore spec:
+    // the `ignore` package normalizes `dir` and `dir/` to match directories.
+    // See: https://github.com/kaelzhang/node-ignore#2-filenames-and-dirnames
+    if (ig && rel && ig.ignores(rel + '/')) return true;
+    return false;
+  }
 };

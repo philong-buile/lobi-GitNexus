@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { walkRepositoryPaths } from '../../src/core/ingestion/filesystem-walker.js';
+import { batchBySize } from '../../src/core/ingestion/pipeline-phases/data-files.js';
 
 const temporaryRoots: string[] = [];
 
@@ -42,5 +43,30 @@ describe('walkRepositoryPaths data files', () => {
     });
     const scanned = await walkRepositoryPaths(root, undefined, { quiet: true });
     expect(scanned.map((f) => f.path)).toEqual(['tests/fixtures/a.csv']);
+  });
+});
+
+describe('walkRepositoryPaths fixtures and gitignore negation', () => {
+  it('does not let a file-level negation pull fixture code in', async () => {
+    const root = await makeRepo({
+      '.gitignore': '*.gen.ts\n!schema.gen.ts\n',
+      'tests/fixtures/app/schema.gen.ts': 'export const s = 1;\n',
+      'tests/fixtures/app/data.csv': 'a,n\nx,1\n',
+      'src/schema.gen.ts': 'export const t = 1;\n',
+    });
+    const paths = (await walkRepositoryPaths(root, undefined, { quiet: true })).map((f) => f.path);
+    expect(paths).toContain('tests/fixtures/app/data.csv');
+    expect(paths).toContain('src/schema.gen.ts');
+    expect(paths).not.toContain('tests/fixtures/app/schema.gen.ts');
+  });
+});
+
+describe('batchBySize', () => {
+  it('bounds each batch by total size and gives an oversized entry its own batch', () => {
+    const sizes = (bs: { size: number }[][]) => bs.map((b) => b.map((e) => e.size));
+    expect(
+      sizes(batchBySize([{ size: 3 }, { size: 4 }, { size: 5 }, { size: 20 }, { size: 1 }], 10)),
+    ).toEqual([[3, 4], [5], [20], [1]]);
+    expect(batchBySize([], 10)).toEqual([]);
   });
 });

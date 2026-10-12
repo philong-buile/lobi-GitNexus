@@ -282,8 +282,30 @@ describe('blankComments', () => {
     expect(blankComments('a = `x\n// not\n` // c', slash)).toBe('a = `x\n// not\n`     ');
   });
 
-  it('blanks an unterminated block comment to the end', () => {
-    expect(blankComments('a /* x\ny', slash)).toBe('a     \n ');
+  it('ignores an unclosed block opener instead of blanking the rest of the file', () => {
+    expect(blankComments('a /* x\ny', slash)).toBe('a /* x\ny');
+  });
+
+  it('does not read an escaped slash in a regex literal as a comment opener', () => {
+    const src = "const b = d.replace(/\\/*$/, '');\nload('data/orders.csv');\n/** doc */\n";
+    expect(blankComments(src, slash)).toBe(src.replace('/** doc */', '          '));
+    const url = "const re = /^https?:\\/\\//; load('data/orders.csv');";
+    expect(blankComments(url, slash)).toBe(url);
+  });
+});
+
+describe('linkDataFileReferences keeps edges next to regex literals', () => {
+  it('links a path on the line after a /\\/*$/ regex', () => {
+    const graph = graphWithFiles('data/users.csv', 'src/a.ts');
+    const { columnsByPath } = processDataFiles(graph, [
+      { path: 'data/users.csv', content: 'id,email\n1,a\n' },
+    ]);
+    const content = "const b = d.replace(/\\/*$/, '');\nload('data/users.csv');\n/** doc */\n";
+    const r = linkDataFileReferences(graph, [{ path: 'src/a.ts', content }], columnsByPath, () => ({
+      line: ['//'],
+      block: [['/*', '*/']],
+    }));
+    expect(r.fileRefs).toBe(1);
   });
 });
 

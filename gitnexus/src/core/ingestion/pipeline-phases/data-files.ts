@@ -29,6 +29,27 @@ const REFERRER_BATCH = 500;
 /** Data file bytes held in memory at once. */
 const DATA_BATCH_BYTES = 64 * 1024 * 1024;
 
+/**
+ * Splits entries into consecutive batches of at most `maxBytes` total size.
+ * An entry larger than `maxBytes` gets a batch of its own.
+ */
+export const batchBySize = <T extends { size: number }>(
+  entries: readonly T[],
+  maxBytes: number,
+): T[][] => {
+  const batches: T[][] = [];
+  for (let i = 0; i < entries.length; ) {
+    const batch = [entries[i++]];
+    let bytes = batch[0].size;
+    while (i < entries.length && bytes + entries[i].size <= maxBytes) {
+      bytes += entries[i].size;
+      batch.push(entries[i++]);
+    }
+    batches.push(batch);
+  }
+  return batches;
+};
+
 export interface DataFilesOutput {
   dataFiles: number;
   columns: number;
@@ -53,13 +74,7 @@ export const dataFilesPhase: PipelinePhase<DataFilesOutput> = {
     const columnsByPath = new Map<string, DataColumnRef[]>();
     let dataFiles = 0;
     let columns = 0;
-    for (let i = 0; i < dataEntries.length; ) {
-      const batch = [dataEntries[i++]];
-      let bytes = batch[0].size;
-      while (i < dataEntries.length && bytes + dataEntries[i].size <= DATA_BATCH_BYTES) {
-        bytes += dataEntries[i].size;
-        batch.push(dataEntries[i++]);
-      }
+    for (const batch of batchBySize(dataEntries, DATA_BATCH_BYTES)) {
       const contents = await readFileContents(
         ctx.repoPath,
         batch.map((f) => f.path),

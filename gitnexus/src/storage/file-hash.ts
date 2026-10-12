@@ -19,7 +19,7 @@
  */
 
 import { createHash } from 'crypto';
-import fs from 'fs/promises';
+import { createReadStream } from 'fs';
 import path from 'path';
 import { chunk } from '../lib/utils.js';
 
@@ -29,8 +29,11 @@ import { chunk } from '../lib/utils.js';
  */
 export const computeFileHash = async (absPath: string): Promise<string | null> => {
   try {
-    const buf = await fs.readFile(absPath);
-    return createHash('sha256').update(buf).digest('hex');
+    // Streamed: data files may be up to MAX_DATA_FILE_BYTES each, and a batch
+    // of them must not be held in memory whole.
+    const hash = createHash('sha256');
+    for await (const part of createReadStream(absPath)) hash.update(part as Buffer);
+    return hash.digest('hex');
   } catch {
     return null;
   }

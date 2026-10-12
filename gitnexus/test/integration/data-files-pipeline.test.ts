@@ -32,6 +32,12 @@ const FILES: Record<string, string> = {
     '',
   ].join('\n'),
   'README.md': '# Data\n\nSee [users](data/users.csv) and `data/orders.tsv`.\n',
+  // Only a comment names unused.csv: it must stay unreferenced.
+  'src/legacy.py': '# old: pd.read_csv("data/unused.csv")\ndef legacy():\n    return 0\n',
+  'tests/fixtures/sample.csv': 'sku,qty\nA1,1\nB2,2\n',
+  'tests/fixtures/helper.py': 'def fixture_helper():\n    return 1\n',
+  'tests/test_sample.py':
+    'def test_sample():\n    return open("tests/fixtures/sample.csv").read()\n',
 };
 
 describe('data files pipeline', () => {
@@ -63,6 +69,7 @@ describe('data files pipeline', () => {
       'data/orders.tsv',
       'data/unused.csv',
       'data/users.csv',
+      'tests/fixtures/sample.csv',
     ]);
     expect(files.find((p) => p.filePath === 'data/users.csv')).toMatchObject({
       rowCount: 2,
@@ -95,6 +102,13 @@ describe('data files pipeline', () => {
     expect(
       [...result.graph.iterRelationshipsByType('USES')].some((r) => r.targetId === unused),
     ).toBe(false);
+  });
+
+  it('indexes data files under fixtures/ but not the code there', () => {
+    const sample = generateId('DataFile', 'tests/fixtures/sample.csv');
+    expect(result.graph.getNode(sample)).toBeDefined();
+    expect(edge('USES', generateId('File', 'tests/test_sample.py'), sample)).toBeDefined();
+    expect(result.graph.getNode(generateId('File', 'tests/fixtures/helper.py'))).toBeUndefined();
   });
 
   it('stores no cell value in any graph node', () => {
