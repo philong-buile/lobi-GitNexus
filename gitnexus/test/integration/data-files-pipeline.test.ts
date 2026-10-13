@@ -1,5 +1,5 @@
 /**
- * Data file (CSV/TSV) indexing, end to end: a real pipeline run over a tiny
+ * Data file (CSV/TSV/XLSX) indexing, end to end: a real pipeline run over a tiny
  * repo, then the DB export. The gate is privacy — the marker values planted in
  * the data rows must appear in no graph node and in no exported DB CSV.
  */
@@ -11,10 +11,24 @@ import { runPipelineFromRepo } from '../../src/core/ingestion/pipeline.js';
 import { streamAllCSVsToDisk } from '../../src/core/lbug/csv-generator.js';
 import { generateId } from '../../src/lib/utils.js';
 import type { PipelineResult } from '../../src/types/pipeline.js';
+import { makeXlsx } from '../helpers/xlsx.js';
 
-const MARKERS = ['ZZMARKER_ALICE', 'zzmarker.bob@example.com', 'ZZMARKER_ORDER_42'];
+const MARKERS = [
+  'ZZMARKER_ALICE',
+  'zzmarker.bob@example.com',
+  'ZZMARKER_ORDER_42',
+  'ZZMARKER_SHEET_CELL',
+];
 
-const FILES: Record<string, string> = {
+const inline = (ref: string, text: string) =>
+  `<c r="${ref}" t="inlineStr"><is><t>${text}</t></is></c>`;
+
+const FILES: Record<string, string | Buffer> = {
+  'data/report.xlsx': makeXlsx({
+    Summary:
+      `<row r="1">${inline('A1', 'region')}${inline('B1', 'total')}</row>` +
+      `<row r="2">${inline('A2', MARKERS[3])}<c r="B2"><v>12</v></c></row>`,
+  }),
   'data/users.csv': [
     'id,email,signup_date',
     `1,${MARKERS[1]},2024-01-01`,
@@ -67,10 +81,16 @@ describe('data files pipeline', () => {
     const files = nodes('DataFile').map((n) => n.properties);
     expect(files.map((p) => p.filePath).sort()).toEqual([
       'data/orders.tsv',
+      'data/report.xlsx',
       'data/unused.csv',
       'data/users.csv',
       'tests/fixtures/sample.csv',
     ]);
+    expect(files.find((p) => p.filePath === 'data/report.xlsx')).toMatchObject({
+      delimiter: 'sheet',
+      rowCount: 1,
+      columnCount: 2,
+    });
     expect(files.find((p) => p.filePath === 'data/users.csv')).toMatchObject({
       rowCount: 2,
       columnCount: 3,

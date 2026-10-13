@@ -668,7 +668,7 @@ GitNexus builds a complete knowledge graph of your codebase through a multi-phas
 5. **Processes** — traces execution flows from entry points through call chains
 6. **Search** — builds hybrid search indexes for fast retrieval
 
-CSV/TSV files are indexed by structure only (a `DataFile` node plus one `DataColumn` per header column); cell values are never stored, returned by `grep`, or sent to wiki LLM prompts. A CSV whose columns are all text and give no header signal gets a `DataFile` node but no `DataColumn` nodes, because its first row may be private data.
+CSV, TSV and XLSX files are indexed by structure only (a `DataFile` node plus one `DataColumn` per header column; for XLSX, per header column of each worksheet, with `delimiter: 'sheet'`); cell values are never stored, returned by `grep`, or sent to wiki LLM prompts. A CSV or worksheet whose columns are all text and give no header signal gets a `DataFile` node but no `DataColumn` nodes, because its first row may be private data.
 
 ### Supported Languages
 

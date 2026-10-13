@@ -323,7 +323,7 @@ CREATE NODE TABLE Section (
   PRIMARY KEY (id)
 )`;
 
-// Delimited data files (.csv/.tsv). The code-element shape plus the counts;
+// Data files (.csv/.tsv/.xlsx; delimiter 'sheet' for .xlsx). The code-element shape plus the counts;
 // `content` stays empty — cell values are never stored.
 export const DATA_FILE_SCHEMA = `
 CREATE NODE TABLE DataFile (
@@ -423,7 +423,7 @@ const SCOPE_BRIDGE_TARGET_LABELS: ReadonlySet<NodeLabel> = new Set<NodeLabel>([
  *  - `Folder` is a filesystem container (`Folder→Folder` / `Folder→File` only).
  *  - `BasicBlock` is the PDG substrate (`BasicBlock→BasicBlock` only; measured
  *    over 300k PDG edges, no other pair is emitted).
- *  - `DataFile` / `DataColumn` describe a .csv/.tsv file's structure. Only
+ *  - `DataFile` / `DataColumn` describe a .csv/.tsv/.xlsx file's structure. Only
  *    `pipeline-phases/data-files.ts` emits edges to them, and only from `File`
  *    or `DataFile`, so their pairs are hand-declared in
  *    {@link STRUCTURAL_PAIR_DDL}.
