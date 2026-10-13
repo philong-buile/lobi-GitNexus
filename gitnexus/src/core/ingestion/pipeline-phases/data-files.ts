@@ -1,7 +1,7 @@
 /**
  * Phase: dataFiles
  *
- * Indexes delimited data files (.csv/.tsv) by structure only and links the
+ * Indexes data files (.csv/.tsv/.xlsx) by structure only and links the
  * files that reference them. See data-file-processor.ts.
  *
  * @deps    structure
@@ -9,6 +9,8 @@
  * @writes  graph (DataFile/DataColumn nodes, CONTAINS + USES edges)
  */
 
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import type { PipelinePhase, PipelineContext, PhaseResult } from './types.js';
 import { getPhaseOutput } from './types.js';
 import type { StructureOutput } from './structure.js';
@@ -25,6 +27,8 @@ import { logger } from '../../logger.js';
 
 /** Referrer files read per batch, to bound memory on large repos. */
 const REFERRER_BATCH = 500;
+
+const isXlsx = (p: string): boolean => path.extname(p).toLowerCase() === '.xlsx';
 
 /** Data file bytes held in memory at once. */
 const DATA_BATCH_BYTES = 64 * 1024 * 1024;
@@ -75,10 +79,18 @@ export const dataFilesPhase: PipelinePhase<DataFilesOutput> = {
     let dataFiles = 0;
     let columns = 0;
     for (const batch of batchBySize(dataEntries, DATA_BATCH_BYTES)) {
-      const contents = await readFileContents(
+      const contents: Map<string, string | Buffer> = await readFileContents(
         ctx.repoPath,
-        batch.map((f) => f.path),
+        batch.map((f) => f.path).filter((p) => !isXlsx(p)),
       );
+      // .xlsx is a zip archive: read raw bytes, not utf-8 text.
+      for (const f of batch.filter((e) => isXlsx(e.path))) {
+        try {
+          contents.set(f.path, await fs.readFile(path.join(ctx.repoPath, f.path)));
+        } catch {
+          // unreadable: skipped, same as readFileContents
+        }
+      }
       const processed = processDataFiles(
         ctx.graph,
         batch

@@ -1,9 +1,9 @@
 /**
  * Data File Processor
  *
- * Indexes delimited data files (.csv, .tsv) by STRUCTURE ONLY: a `DataFile`
+ * Indexes data files (.csv, .tsv, .xlsx) by STRUCTURE ONLY: a `DataFile`
  * node per file (row count, column count, delimiter) and a `DataColumn` node
- * per header column. Cell values are never stored — data files routinely hold
+ * per header column — for .xlsx, per header column of every worksheet. Cell values are never stored — data files routinely hold
  * private data, so nothing past the header row reaches a node property, and a
  * first row that does not look like a header (a headerless file) produces no
  * columns at all rather than risk storing a data row as column names.
@@ -19,8 +19,9 @@ import type { GraphNode } from 'gitnexus-shared';
 import { generateId } from '../../lib/utils.js';
 import type { KnowledgeGraph } from '../graph/types.js';
 import type { CommentSyntax } from './language-provider.js';
+import { readXlsxSheets } from './xlsx-reader.js';
 
-const DATA_FILE_EXTENSIONS = new Set(['.csv', '.tsv']);
+const DATA_FILE_EXTENSIONS = new Set(['.csv', '.tsv', '.xlsx']);
 
 /** Columns kept per file; wider files keep the first MAX_DATA_COLUMNS. */
 export const MAX_DATA_COLUMNS = 256;
@@ -40,6 +41,12 @@ export const isDataFilePath = (filePath: string): boolean =>
 export interface DataFileInput {
   path: string;
   content: string;
+}
+
+/** .xlsx arrives as raw bytes; .csv/.tsv as text. */
+export interface DataFileBytesInput {
+  path: string;
+  content: string | Buffer;
 }
 
 type DelimiterName = 'comma' | 'semicolon' | 'tab';
@@ -167,7 +174,7 @@ export interface DataColumnRef {
  */
 export const processDataFiles = (
   graph: KnowledgeGraph,
-  files: readonly DataFileInput[],
+  files: readonly DataFileBytesInput[],
 ): { dataFiles: number; columns: number; columnsByPath: Map<string, DataColumnRef[]> } => {
   const columnsByPath = new Map<string, DataColumnRef[]>();
   let dataFiles = 0;
@@ -178,26 +185,63 @@ export const processDataFiles = (
     const fileNodeId = generateId('File', file.path);
     if (!graph.getNode(fileNodeId)) continue;
 
-    const text = file.content.replace(/^﻿/, '');
-    const delimiter = sniffDelimiter(file.path, text);
-    const { records, total } = scanDelimited(
-      text,
-      DELIMITER_CHARS[delimiter],
-      HEADER_SAMPLE_ROWS + 1,
-    );
-    const first = records[0] ?? [];
-    const hasHeader = looksLikeHeader(first, records.slice(1));
-    const columnCount = first.length;
-    const rowCount = hasHeader ? total - 1 : total;
-    const kept = hasHeader ? Math.min(columnCount, MAX_DATA_COLUMNS) : 0;
-
-    const ext = path.extname(file.path).slice(1).toLowerCase();
-    let description = `${ext}, ${columnCount} columns, ${rowCount} rows`;
-    if (!hasHeader && columnCount > 0) description += ', no header detected';
-    if (kept < columnCount && hasHeader) description += `, first ${kept} columns indexed`;
+    // A .csv/.tsv is one unnamed sheet; an .xlsx is one sheet per worksheet.
+    let sheets: { name?: string; records: string[][]; total: number }[];
+    let delimiter: string;
+    let unreadable = false;
+    if (typeof file.content === 'string') {
+      const text = file.content.replace(/^﻿/, '');
+      const sniffed = sniffDelimiter(file.path, text);
+      sheets = [scanDelimited(text, DELIMITER_CHARS[sniffed], HEADER_SAMPLE_ROWS + 1)];
+      delimiter = sniffed;
+    } else {
+      const read = readXlsxSheets(file.content, HEADER_SAMPLE_ROWS + 1);
+      unreadable = read === null;
+      sheets = read ?? [];
+      delimiter = 'sheet';
+    }
 
     const dataFileId = generateId('DataFile', file.path);
-    const dataFileNode: GraphNode = {
+    const refs: DataColumnRef[] = [];
+    const columnNodes: GraphNode[] = [];
+    let rowCount = 0;
+    let columnCount = 0;
+    let headerless = false;
+    for (const sheet of sheets) {
+      const first = sheet.records[0] ?? [];
+      const hasHeader = looksLikeHeader(first, sheet.records.slice(1));
+      columnCount += first.length;
+      rowCount += hasHeader ? sheet.total - 1 : sheet.total;
+      if (!hasHeader && first.length > 0) headerless = true;
+      const kept = hasHeader ? Math.min(first.length, MAX_DATA_COLUMNS - refs.length) : 0;
+      for (let i = 0; i < kept; i++) {
+        const name = first[i].trim();
+        const where = sheet.name === undefined ? '' : `${sheet.name}:`;
+        const columnId = generateId('DataColumn', `${file.path}:${where}${i}:${name}`);
+        const position = `column ${i + 1} of ${first.length}`;
+        columnNodes.push({
+          id: columnId,
+          label: 'DataColumn',
+          properties: {
+            name,
+            filePath: file.path,
+            description: sheet.name === undefined ? position : `sheet "${sheet.name}", ${position}`,
+          },
+        });
+        refs.push({ id: columnId, name });
+      }
+    }
+
+    const ext = path.extname(file.path).slice(1).toLowerCase();
+    const sheetPart = delimiter === 'sheet' ? `, ${sheets.length} sheets` : '';
+    let description = `${ext}${sheetPart}, ${columnCount} columns, ${rowCount} rows`;
+    if (unreadable) description += ', unreadable';
+    if (headerless) description += ', no header detected';
+    if (refs.length === MAX_DATA_COLUMNS && columnCount > MAX_DATA_COLUMNS) {
+      description += `, first ${MAX_DATA_COLUMNS} columns indexed`;
+    }
+
+    graph.addNode({
       id: dataFileId,
       label: 'DataFile',
       properties: {
@@ -208,8 +252,7 @@ export const processDataFiles = (
         delimiter,
         description,
       },
-    };
-    graph.addNode(dataFileNode);
+    });
     graph.addRelationship({
       id: generateId('CONTAINS', `${fileNodeId}->${dataFileId}`),
       type: 'CONTAINS',
@@ -220,28 +263,16 @@ export const processDataFiles = (
     });
     dataFiles++;
 
-    const refs: DataColumnRef[] = [];
-    for (let i = 0; i < kept; i++) {
-      const name = first[i].trim();
-      const columnId = generateId('DataColumn', `${file.path}:${i}:${name}`);
-      graph.addNode({
-        id: columnId,
-        label: 'DataColumn',
-        properties: {
-          name,
-          filePath: file.path,
-          description: `column ${i + 1} of ${columnCount}`,
-        },
-      });
+    for (const node of columnNodes) {
+      graph.addNode(node);
       graph.addRelationship({
-        id: generateId('CONTAINS', `${dataFileId}->${columnId}`),
+        id: generateId('CONTAINS', `${dataFileId}->${node.id}`),
         type: 'CONTAINS',
         sourceId: dataFileId,
-        targetId: columnId,
+        targetId: node.id,
         confidence: 1.0,
         reason: 'data-column',
       });
-      refs.push({ id: columnId, name });
     }
     columnsByPath.set(file.path, refs);
     columns += refs.length;
@@ -305,7 +336,7 @@ export const blankComments = (content: string, syntax: CommentSyntax): string =>
 };
 
 const STRING_LITERAL_RE = /"([^"\n]{1,300})"|'([^'\n]{1,300})'|`([^`\n]{1,300})`/g;
-const DATA_EXT_IN_TEXT_RE = /\.[ct]sv\b/i;
+const DATA_EXT_IN_TEXT_RE = /\.(?:[ct]sv|xlsx)\b/i;
 const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**

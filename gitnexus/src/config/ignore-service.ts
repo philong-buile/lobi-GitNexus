@@ -200,8 +200,7 @@ const IGNORED_EXTENSIONS = new Set([
   '.pdf',
   '.doc',
   '.docx',
-  '.xls',
-  '.xlsx',
+  '.xls', // .xlsx is a data file (see below)
   '.ppt',
   '.pptx',
   '.odt',
@@ -258,8 +257,8 @@ const IGNORED_EXTENSIONS = new Set([
   '.pfx',
 
   // Data files (often large/binary)
-  // .csv/.tsv are indexed by structure only (pipeline-phases/data-files.ts);
-  // opt out with `*.csv` / `*.tsv` in .gitnexusignore.
+  // .csv/.tsv/.xlsx are indexed by structure only (pipeline-phases/data-files.ts);
+  // opt out with `*.csv` / `*.tsv` / `*.xlsx` in .gitnexusignore.
   '.parquet',
   '.avro',
   '.feather',

@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readXlsxSheets } from '../../src/core/ingestion/xlsx-reader.js';
+import { makeXlsx } from '../helpers/xlsx.js';
 import {
   blankComments,
   isDataFilePath,
@@ -352,5 +354,102 @@ describe('linkDataFileReferences with comment syntax', () => {
 
   it('is unchanged when commentSyntaxFor is omitted', () => {
     expect(link('src/a.py', '# old: read_csv("data/users.csv")\n', false).fileRefs).toBe(1);
+  });
+});
+
+describe('xlsx data files', () => {
+  it('is a data file path', () => {
+    expect(isDataFilePath('a/b.XLSX')).toBe(true);
+    expect(isDataFilePath('a/b.xls')).toBe(false);
+  });
+
+  it('reads shared strings, inline strings, gaps and skips phonetic runs', () => {
+    const shared =
+      '<sst><si><t>id</t></si><si><r><t>na</t></r><r><t>me</t></r><rPh><t>ナメ</t></rPh></si></sst>';
+    const buf = makeXlsx(
+      {
+        Users:
+          '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="C1" t="s"><v>1</v></c></row>' +
+          '<row r="2"/>' +
+          '<row r="3"><c r="A3"><v>1</v></c><c r="C3" t="inlineStr"><is><t>A&amp;B</t></is></c></row>',
+      },
+      { 'xl/sharedStrings.xml': shared },
+    );
+    expect(readXlsxSheets(buf, 5)).toEqual([
+      {
+        name: 'Users',
+        records: [
+          ['id', '', 'name'],
+          ['1', '', 'A&B'],
+        ],
+        total: 2,
+      },
+    ]);
+  });
+
+  it('indexes header columns per sheet and never cell values', () => {
+    const graph = graphWithFiles('data/book.xlsx', 'src/load.py');
+    const header = (a: string, b: string) =>
+      `<row r="1"><c r="A1" t="inlineStr"><is><t>${a}</t></is></c><c r="B1" t="inlineStr"><is><t>${b}</t></is></c></row>`;
+    const row = (r: number, v: string) =>
+      `<row r="${r}"><c r="A${r}"><v>${r}</v></c><c r="B${r}" t="inlineStr"><is><t>${v}</t></is></c></row>`;
+    const buf = makeXlsx({
+      Users: header('id', 'email') + row(2, 'alice@example.com') + row(3, 'bob@example.com'),
+      Notes: '<row r="1"><c r="A1" t="inlineStr"><is><t>secret memo</t></is></c></row>',
+    });
+    const result = processDataFiles(graph, [{ path: 'data/book.xlsx', content: buf }]);
+    expect(result.dataFiles).toBe(1);
+    expect(result.columns).toBe(2);
+    const [dataFile] = nodesOf(graph, 'DataFile');
+    expect(dataFile.properties).toMatchObject({ delimiter: 'sheet', rowCount: 3, columnCount: 3 });
+    expect(dataFile.properties.description).toBe(
+      'xlsx, 2 sheets, 3 columns, 3 rows, no header detected',
+    );
+    expect(nodesOf(graph, 'DataColumn').map((n) => n.properties.description)).toEqual([
+      'sheet "Users", column 1 of 2',
+      'sheet "Users", column 2 of 2',
+    ]);
+    const stored = JSON.stringify([...graph.iterNodes()]);
+    expect(stored).not.toContain('alice');
+    expect(stored).not.toContain('secret');
+
+    const link = linkDataFileReferences(
+      graph,
+      [{ path: 'src/load.py', content: 'df = pd.read_excel("data/book.xlsx")\ndf["email"]\n' }],
+      result.columnsByPath,
+    );
+    expect(link).toEqual({ fileRefs: 1, columnRefs: 1 });
+  });
+
+  it('gives a non-zip .xlsx a DataFile with no columns', () => {
+    const graph = graphWithFiles('data/bad.xlsx');
+    const result = processDataFiles(graph, [
+      { path: 'data/bad.xlsx', content: Buffer.from('not a zip') },
+    ]);
+    expect(result).toMatchObject({ dataFiles: 1, columns: 0 });
+    expect(nodesOf(graph, 'DataFile')[0].properties.description).toBe(
+      'xlsx, 0 sheets, 0 columns, 0 rows, unreadable',
+    );
+  });
+});
+
+describe('xlsx reader on hostile input', () => {
+  it('stays linear when closing tags are missing', () => {
+    const rows = '<row r="1"><c r="A1"><v>1</v>'.repeat(200_000);
+    const started = performance.now();
+    expect(readXlsxSheets(makeXlsx({ Bad: rows }), 5)).toEqual([
+      { name: 'Bad', records: [], total: 0 },
+    ]);
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
+
+  it('shares one inflate budget across sheets that point at the same part', () => {
+    const big = '<row r="1"><c r="A1"><v>1</v></c></row>'.padEnd(40 * 1024 * 1024, ' ');
+    const buf = makeXlsx({ A: big });
+    const read = readXlsxSheets(buf, 5)!;
+    expect(read).toHaveLength(1);
+    // A second 40 MiB sheet would pass the 64 MiB budget: it reads as missing.
+    const two = readXlsxSheets(makeXlsx({ A: big, B: big }), 5)!;
+    expect(two.map((s) => s.name)).toEqual(['A']);
   });
 });
