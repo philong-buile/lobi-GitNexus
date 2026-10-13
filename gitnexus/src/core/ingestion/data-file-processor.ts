@@ -188,13 +188,16 @@ export const processDataFiles = (
     // A .csv/.tsv is one unnamed sheet; an .xlsx is one sheet per worksheet.
     let sheets: { name?: string; records: string[][]; total: number }[];
     let delimiter: string;
+    let unreadable = false;
     if (typeof file.content === 'string') {
       const text = file.content.replace(/^﻿/, '');
       const sniffed = sniffDelimiter(file.path, text);
       sheets = [scanDelimited(text, DELIMITER_CHARS[sniffed], HEADER_SAMPLE_ROWS + 1)];
       delimiter = sniffed;
     } else {
-      sheets = readXlsxSheets(file.content, HEADER_SAMPLE_ROWS + 1) ?? [];
+      const read = readXlsxSheets(file.content, HEADER_SAMPLE_ROWS + 1);
+      unreadable = read === null;
+      sheets = read ?? [];
       delimiter = 'sheet';
     }
 
@@ -232,6 +235,7 @@ export const processDataFiles = (
     const ext = path.extname(file.path).slice(1).toLowerCase();
     const sheetPart = delimiter === 'sheet' ? `, ${sheets.length} sheets` : '';
     let description = `${ext}${sheetPart}, ${columnCount} columns, ${rowCount} rows`;
+    if (unreadable) description += ', unreadable';
     if (headerless) description += ', no header detected';
     if (refs.length === MAX_DATA_COLUMNS && columnCount > MAX_DATA_COLUMNS) {
       description += `, first ${MAX_DATA_COLUMNS} columns indexed`;

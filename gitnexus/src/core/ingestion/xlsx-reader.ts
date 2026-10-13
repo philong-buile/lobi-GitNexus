@@ -3,12 +3,20 @@
  * `keep` non-blank rows as strings, plus its non-blank row count. Built on
  * node:zlib (no dependency); handles plain zip archives (no zip64, no
  * encryption) — anything else returns null and the workbook gets no columns.
+ *
+ * Input is untrusted: only the parts used are inflated, under one shared byte
+ * budget, and XML is scanned by splitting on closing tags so a malformed file
+ * costs linear time.
  */
 
 import { inflateRawSync } from 'node:zlib';
 
-/** Per-entry inflate cap: a zip bomb throws instead of exhausting memory. */
-const MAX_ENTRY_BYTES = 64 * 1024 * 1024;
+/**
+ * Inflated bytes allowed across all parts of one workbook. A zip bomb (or
+ * many directory entries pointing at one bomb) runs out of budget instead of
+ * memory; a part past the budget is treated as missing.
+ */
+const MAX_INFLATED_BYTES = 64 * 1024 * 1024;
 
 export interface SheetRows {
   name: string;
@@ -16,7 +24,8 @@ export interface SheetRows {
   total: number;
 }
 
-const readZipEntries = (buf: Buffer): Map<string, Buffer> | null => {
+/** Lazy reader over the zip's entries; each part is inflated at most once. */
+const readZipIndex = (buf: Buffer): ((name: string) => string | undefined) | null => {
   // End of central directory: 22 bytes plus a comment of up to 64 KiB.
   let eocd = -1;
   for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 0xffff); i--) {
@@ -28,7 +37,7 @@ const readZipEntries = (buf: Buffer): Map<string, Buffer> | null => {
   if (eocd < 0) return null;
   const count = buf.readUInt16LE(eocd + 10);
   let p = buf.readUInt32LE(eocd + 16);
-  const entries = new Map<string, Buffer>();
+  const index = new Map<string, { method: number; start: number; size: number }>();
   for (let n = 0; n < count; n++) {
     if (p + 46 > buf.length || buf.readUInt32LE(p) !== 0x02014b50) return null;
     const method = buf.readUInt16LE(p + 10);
@@ -39,13 +48,57 @@ const readZipEntries = (buf: Buffer): Map<string, Buffer> | null => {
     p += 46 + nameLen + buf.readUInt16LE(p + 30) + buf.readUInt16LE(p + 32);
     if (local + 30 > buf.length || buf.readUInt32LE(local) !== 0x04034b50) return null;
     const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
-    const raw = buf.subarray(start, start + size);
-    if (method === 0) entries.set(name, raw);
-    else if (method === 8)
-      entries.set(name, inflateRawSync(raw, { maxOutputLength: MAX_ENTRY_BYTES }));
+    index.set(name, { method, start, size });
   }
-  return entries;
+
+  let budget = MAX_INFLATED_BYTES;
+  const cache = new Map<string, string | undefined>();
+  return (name) => {
+    if (cache.has(name)) return cache.get(name);
+    const entry = index.get(name);
+    let out: Buffer | undefined;
+    if (entry && budget > 0) {
+      const raw = buf.subarray(entry.start, entry.start + entry.size);
+      try {
+        if (entry.method === 0 && raw.length <= budget) out = raw;
+        else if (entry.method === 8) out = inflateRawSync(raw, { maxOutputLength: budget });
+      } catch {
+        budget = 0; // corrupt stream or past the budget: inflate nothing more
+      }
+    }
+    if (out) budget -= out.length;
+    const text = out?.toString('utf8');
+    cache.set(name, text);
+    return text;
+  };
 };
+
+/**
+ * Attributes and body of each `<tag ...>body</tag>` element. Splitting on the
+ * closing tag keeps a missing closer to one linear pass, not a rescan per
+ * opener. Self-closing siblings carry no body and are skipped.
+ */
+const elementBodies = (xml: string, tag: string): { attrs: string; body: string }[] => {
+  const out: { attrs: string; body: string }[] = [];
+  const parts = xml.split(`</${tag}>`);
+  for (let i = 0; i < parts.length - 1; i++) {
+    const chunk = parts[i];
+    let open = chunk.lastIndexOf(`<${tag}`);
+    // `<c` also prefixes `<col`: the tag name must end right after it.
+    while (open >= 0 && /[\w:.-]/.test(chunk[open + tag.length + 1] ?? '')) {
+      open = open === 0 ? -1 : chunk.lastIndexOf(`<${tag}`, open - 1);
+    }
+    if (open < 0) continue;
+    const close = chunk.indexOf('>', open);
+    if (close < 0) continue;
+    out.push({ attrs: chunk.slice(open + tag.length + 1, close), body: chunk.slice(close + 1) });
+  }
+  return out;
+};
+
+/** Attribute text of each `<tag ...>` or `<tag .../>` opener (bounded length). */
+const openerAttrs = (xml: string, tag: string): string[] =>
+  [...xml.matchAll(new RegExp(`<${tag}\\b([^>]{0,4096})>`, 'g'))].map((m) => m[1]);
 
 const decodeXml = (s: string): string =>
   s.replace(/&(lt|gt|amp|quot|apos|#\d+|#x[0-9a-f]+);/gi, (m, e: string) => {
@@ -57,14 +110,22 @@ const decodeXml = (s: string): string =>
 
 /** Concatenated text of every `<t>` run (plain and rich-text), minus phonetic (`<rPh>`) runs. */
 const textRuns = (xml: string): string => {
+  // Keep the text before each `<rPh` whose `</rPh>` closes the part.
+  const parts = xml.split('</rPh>');
+  const visible = parts
+    .map((part, i) => {
+      if (i === parts.length - 1) return part;
+      const open = part.indexOf('<rPh');
+      return open < 0 ? part : part.slice(0, open);
+    })
+    .join('');
   let out = '';
-  const visible = xml.replace(/<rPh\b[\s\S]*?<\/rPh>/g, '');
-  for (const m of visible.matchAll(/<t(?:\s[^>]*)?>([^<]*)<\/t>/g)) out += m[1];
+  for (const m of visible.matchAll(/<t(?:\s[^>]{0,256})?>([^<]*)<\/t>/g)) out += m[1];
   return decodeXml(out);
 };
 
 const attr = (attrs: string, name: string): string | undefined =>
-  new RegExp(`\\b${name}="([^"]*)"`).exec(attrs)?.[1];
+  new RegExp(`\\b${name}="([^"]{0,1024})"`).exec(attrs)?.[1];
 
 /** "AB12" -> 27 (zero-based column index). */
 const columnIndex = (ref: string): number => {
@@ -84,20 +145,19 @@ const readSheet = (
 ): { records: string[][]; total: number } => {
   const records: string[][] = [];
   let total = 0;
-  for (const row of xml.matchAll(/<row\b[^>]*?(?:\/>|>([\s\S]*?)<\/row>)/g)) {
+  for (const row of elementBodies(xml, 'row')) {
     const cells: string[] = [];
     let next = 0;
     let hasContent = false;
-    for (const c of (row[1] ?? '').matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
-      const ref = attr(c[1], 'r');
+    for (const c of elementBodies(row.body, 'c')) {
+      const ref = attr(c.attrs, 'r');
       const col = ref ? columnIndex(ref) : next;
       next = col + 1;
-      const body = c[2] ?? '';
-      const type = attr(c[1], 't');
+      const type = attr(c.attrs, 't');
       let value: string;
-      if (type === 'inlineStr') value = textRuns(body);
+      if (type === 'inlineStr') value = textRuns(c.body);
       else {
-        const v = /<v>([^<]*)<\/v>/.exec(body)?.[1];
+        const v = /<v>([^<]*)<\/v>/.exec(c.body)?.[1];
         if (v === undefined) continue;
         value = type === 's' ? (shared[Number(v)] ?? '') : decodeXml(v);
       }
@@ -117,35 +177,30 @@ const readSheet = (
 
 /** Worksheets in workbook order, or null when the file is not a readable .xlsx. */
 export const readXlsxSheets = (buf: Buffer, keep: number): SheetRows[] | null => {
-  let entries: Map<string, Buffer> | null;
-  try {
-    entries = readZipEntries(buf);
-  } catch {
-    return null; // corrupt deflate stream or an entry past MAX_ENTRY_BYTES
-  }
-  const workbook = entries?.get('xl/workbook.xml')?.toString('utf8');
-  if (!entries || !workbook) return null;
+  const read = readZipIndex(buf);
+  const workbook = read?.('xl/workbook.xml');
+  if (!read || !workbook) return null;
 
   const targets = new Map<string, string>();
-  const rels = entries.get('xl/_rels/workbook.xml.rels')?.toString('utf8') ?? '';
-  for (const m of rels.matchAll(/<Relationship\b([^>]*)\/?>/g)) {
-    const id = attr(m[1], 'Id');
-    const target = attr(m[1], 'Target');
+  for (const attrs of openerAttrs(read('xl/_rels/workbook.xml.rels') ?? '', 'Relationship')) {
+    const id = attr(attrs, 'Id');
+    const target = attr(attrs, 'Target');
     if (id && target) {
       targets.set(id, target.startsWith('/') ? target.slice(1) : `xl/${target}`);
     }
   }
 
-  const sharedXml = entries.get('xl/sharedStrings.xml')?.toString('utf8') ?? '';
-  const shared = [...sharedXml.matchAll(/<si>([\s\S]*?)<\/si>/g)].map((m) => textRuns(m[1]));
+  const shared = elementBodies(read('xl/sharedStrings.xml') ?? '', 'si').map((si) =>
+    textRuns(si.body),
+  );
 
   const sheets: SheetRows[] = [];
-  for (const m of workbook.matchAll(/<sheet\b([^>]*)\/?>/g)) {
-    const rid = attr(m[1], 'r:id');
+  for (const attrs of openerAttrs(workbook, 'sheet')) {
+    const rid = attr(attrs, 'r:id');
     const target = rid ? targets.get(rid) : undefined;
-    const xml = target ? entries.get(target)?.toString('utf8') : undefined;
-    if (!xml) continue; // chartsheet or missing part
-    sheets.push({ name: decodeXml(attr(m[1], 'name') ?? ''), ...readSheet(xml, shared, keep) });
+    const xml = target ? read(target) : undefined;
+    if (!xml) continue; // chartsheet, missing part, or past the inflate budget
+    sheets.push({ name: decodeXml(attr(attrs, 'name') ?? ''), ...readSheet(xml, shared, keep) });
   }
   return sheets;
 };

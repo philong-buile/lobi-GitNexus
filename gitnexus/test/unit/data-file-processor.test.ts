@@ -427,5 +427,29 @@ describe('xlsx data files', () => {
       { path: 'data/bad.xlsx', content: Buffer.from('not a zip') },
     ]);
     expect(result).toMatchObject({ dataFiles: 1, columns: 0 });
+    expect(nodesOf(graph, 'DataFile')[0].properties.description).toBe(
+      'xlsx, 0 sheets, 0 columns, 0 rows, unreadable',
+    );
+  });
+});
+
+describe('xlsx reader on hostile input', () => {
+  it('stays linear when closing tags are missing', () => {
+    const rows = '<row r="1"><c r="A1"><v>1</v>'.repeat(200_000);
+    const started = performance.now();
+    expect(readXlsxSheets(makeXlsx({ Bad: rows }), 5)).toEqual([
+      { name: 'Bad', records: [], total: 0 },
+    ]);
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
+
+  it('shares one inflate budget across sheets that point at the same part', () => {
+    const big = '<row r="1"><c r="A1"><v>1</v></c></row>'.padEnd(40 * 1024 * 1024, ' ');
+    const buf = makeXlsx({ A: big });
+    const read = readXlsxSheets(buf, 5)!;
+    expect(read).toHaveLength(1);
+    // A second 40 MiB sheet would pass the 64 MiB budget: it reads as missing.
+    const two = readXlsxSheets(makeXlsx({ A: big, B: big }), 5)!;
+    expect(two.map((s) => s.name)).toEqual(['A']);
   });
 });
